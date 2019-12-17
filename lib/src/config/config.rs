@@ -57,6 +57,24 @@ impl Default for ConsensusConfig {
 }
 
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct PKCS12Credentials {
+    /// Path to your PKCS#12 key file, that contains private key and certificate.
+    ///
+    /// # Notes
+    ///
+    /// Only PKCS#12 is supported right now, but it is planned to move away from this and use
+    /// the PEM format for certificate and private key.
+    ///
+    pub key_file: PathBuf,
+
+    /// PKCS#12 is always encrypted, therefore you must provide a password for Nimiq to be able
+    /// to access your SSL private key.
+    ///
+    pub passphrase: String,
+}
+
+
 /// Contains which protocol to use and the configuration needed for that protocol.
 ///
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -93,19 +111,8 @@ pub enum ProtocolConfig {
         ///
         port: u16,
 
-        /// Path to your PKCS#12 key file, that contains private key and certificate.
-        ///
-        /// # Notes
-        ///
-        /// Only PKCS#12 is supported right now, but it is planned to move away from this and use
-        /// the PEM format for certificate and private key.
-        ///
-        pkcs12_key_file: PathBuf,
-
-        /// PKCS#12 is always encrypted, therefore you must provide a password for Nimiq to be able
-        /// to access your SSL private key.
-        ///
-        pkcs12_passphrase: String,
+        /// The PKCS#12 key file and its password
+        tls_credentials: PKCS12Credentials,
     },
 
     /// Accept incoming connections over WebRTC
@@ -449,6 +456,9 @@ pub struct MetricsServerConfig {
     /// If specified, require HTTP basic auth with these credentials
     #[builder(setter(strip_option))]
     pub credentials: Option<Credentials>,
+
+    /// If specified, use this to encrypt the metrics server
+    pub tls_credentials: Option<PKCS12Credentials>,
 }
 
 /// Client configuration
@@ -645,8 +655,10 @@ impl ClientConfigBuilder {
         self.protocol(ProtocolConfig::Wss {
             host: host.into(),
             port: port.into().unwrap_or(consts::WS_DEFAULT_PORT),
-            pkcs12_key_file: pkcs12_key_file.into(),
-            pkcs12_passphrase: pkcs12_passphrase.into(),
+            tls_credentials: PKCS12Credentials {
+                key_file: pkcs12_key_file.into(),
+                passphrase: pkcs12_passphrase.into(),
+            },
         })
     }
 
@@ -730,8 +742,10 @@ impl ClientConfigBuilder {
                         .ok_or_else(|| Error::config_error("Hostname not set."))?,
                     port: config_file.network.port.clone()
                         .unwrap_or(consts::WS_DEFAULT_PORT),
-                    pkcs12_key_file: PathBuf::from(tls.identity_file),
-                    pkcs12_passphrase: tls.identity_password,
+                    tls_credentials: PKCS12Credentials {
+                        key_file: PathBuf::from(tls.identity_file),
+                        passphrase: tls.identity_password,
+                    },
                 }
             },
             config_file::Protocol::Rtc => ProtocolConfig::Rtc,
@@ -846,6 +860,7 @@ impl ClientConfigBuilder {
                     bind_to,
                     port: metrics_config.port.unwrap_or(consts::METRICS_DEFAULT_PORT),
                     credentials,
+                    tls_credentials: None, // TODO
                 }));
             }
         }
