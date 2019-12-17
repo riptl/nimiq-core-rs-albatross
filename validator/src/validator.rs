@@ -163,7 +163,15 @@ impl Validator {
         let weak = Arc::downgrade(this);
         let blockchain = this.blockchain.notifier.write().register(move |e: &BlockchainEvent<Block>| {
             let this = upgrade_weak!(weak);
+<<<<<<< HEAD
             this.on_blockchain_event(&e);
+=======
+            // We need to clone to move this into the thread. Alternatively we could Arc events.
+            // But except for rebranching, this is only the type of the event and a hash, so not
+            // very expensive to clone anyway.
+            let e = e.clone();
+            tokio::spawn(async move { this.on_blockchain_event(&e); });
+>>>>>>> Port nimiq-validator to Tokio 2.0
         });
 
         // Set up event handlers for validator network events
@@ -484,15 +492,14 @@ impl Validator {
 
             let weak = self.self_weak.clone();
             trace!("Spawning thread to produce next block");
-            tokio::spawn(futures::lazy(move || {
+            tokio::spawn(async move {
                 if let Some(this) = Weak::upgrade(&weak) {
                     match block_type {
                         BlockType::Macro => { this.produce_macro_block(next_block_number, view_number, view_change_proof) },
                         BlockType::Micro => { this.produce_micro_block(next_block_number, view_number, view_change_proof) },
                     }
                 }
-                Ok(())
-            }));
+            });
         }
     }
 
