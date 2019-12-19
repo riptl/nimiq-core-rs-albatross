@@ -163,15 +163,7 @@ impl Validator {
         let weak = Arc::downgrade(this);
         let blockchain = this.blockchain.notifier.write().register(move |e: &BlockchainEvent<Block>| {
             let this = upgrade_weak!(weak);
-<<<<<<< HEAD
             this.on_blockchain_event(&e);
-=======
-            // We need to clone to move this into the thread. Alternatively we could Arc events.
-            // But except for rebranching, this is only the type of the event and a hash, so not
-            // very expensive to clone anyway.
-            let e = e.clone();
-            tokio::spawn(async move { this.on_blockchain_event(&e); });
->>>>>>> Port nimiq-validator to Tokio 2.0
         });
 
         // Set up event handlers for validator network events

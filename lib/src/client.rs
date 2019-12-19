@@ -69,11 +69,7 @@ impl TryFrom<ClientConfig> for ClientInner {
                 let key_file = tls_credentials.key_file.to_str()
                     .unwrap_or_else(|| panic!("Failed to convert path to PKCS#12 key file to string: {}", tls_credentials.key_file.display()))
                     .to_string();
-<<<<<<< HEAD
-                NetworkConfig::new_wss_network_config(host, port, false, pkcs12_key_file, pkcs12_passphrase, config.reverse_proxy)
-=======
-                NetworkConfig::new_wss_network_config(host, port, false, key_file, tls_credentials.passphrase)
->>>>>>> Port metrics server to Tokio 2
+                NetworkConfig::new_wss_network_config(host, port, false, key_file, tls_credentials.passphrase, config.reverse_proxy)
             }
         };
 
