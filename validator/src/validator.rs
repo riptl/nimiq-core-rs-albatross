@@ -86,6 +86,7 @@ pub struct Validator {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum ValidatorTimer {
+    SendTransaction,
     ViewChange,
 }
 
@@ -277,7 +278,7 @@ impl Validator {
             // If we're a parked validator with a wallet key, we signal to unpark automatically.
             let validator_registry = NetworkInfo::from_network_id(self.blockchain.network_id).validator_registry_address().expect("Albatross consensus always has the address set.");
 
-            if self.is_parked(validator_registry) {
+            if self.is_parked(validator_registry) && !self.timers.delay_exists(&ValidatorTimer::SendTransaction) {
                 let mut recipient = Recipient::new_staking_builder(validator_registry.clone());
                 recipient.unpark_validator(&self.validator_key.public);
 
@@ -300,7 +301,11 @@ impl Validator {
                 proof_builder.sign_with_key_pair(validator_wallet_key);
                 let transaction = proof_builder.generate().unwrap();
 
-                self.consensus.mempool.push_transaction(transaction.clone());
+                let weak = self.self_weak.clone();
+                self.timers.set_delay(ValidatorTimer::SendTransaction, move || {
+                    let this = upgrade_weak!(weak);
+                    this.consensus.mempool.push_transaction(transaction.clone());
+                }, Duration::default());
             }
         }
     }
