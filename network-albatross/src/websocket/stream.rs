@@ -6,12 +6,13 @@ use std::net;
 use std::sync::Arc;
 
 use futures::prelude::*;
-use tokio::net::TcpStream;
-use tokio_tungstenite::stream::PeerAddr;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use futures_util::sink::SinkExt;
+use futures_util::future::FutureExt;
 use tungstenite::error::Error as WebSocketError;
 use tungstenite::protocol::CloseFrame;
 use tungstenite::protocol::Message as WebSocketMessage;
+
+use ws_stream_wasm::{WsStream, WsMessage};
 
 use beserial::{Deserialize, Serialize};
 use network_interface::message::{peek_length, Message as NimiqMessage};
@@ -24,7 +25,7 @@ use crate::websocket::error::Error;
 use crate::websocket::public_state::PublicStreamInfo;
 use crate::websocket::Message;
 
-type WebSocketLayer = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type WebSocketLayer = WsStream;
 
 /// This enum describes the current state of the connection.
 #[derive(Clone, Debug)]
@@ -72,7 +73,9 @@ pub struct NimiqMessageStream {
 
 impl NimiqMessageStream {
     pub(super) fn new(ws_socket: WebSocketLayer, outbound: bool) -> Result<Self, Error> {
-        let peer_addr = ws_socket.peer_addr().map_err(Error::NetAddressMissing)?;
+
+        // FIXME: Create NetAddress.UNSPECIFIED equivalent
+        let peer_addr = net::SocketAddr::new(net::IpAddr::V4(net::Ipv4Addr::new(127, 0, 0, 1)), 8080);
         Ok(NimiqMessageStream {
             inner: ws_socket,
             receiving_tag: 254,
@@ -130,24 +133,24 @@ impl Sink for NimiqMessageStream {
                 };
                 (serialized_msg, tag)
             }
-            // Close frames need to be handled differently.
-            Message::Close(frame) => {
-                self.state = WebSocketState::ClosedByUs;
+            // // Close frames need to be handled differently.
+            // Message::Close(frame) => {
+            //     self.state = WebSocketState::ClosedByUs;
 
-                return match self.inner.start_send(WebSocketMessage::Close(frame)) {
-                    Ok(state) => match state {
-                        AsyncSink::Ready => Ok(AsyncSink::Ready),
-                        AsyncSink::NotReady(WebSocketMessage::Close(frame)) => {
-                            Ok(AsyncSink::NotReady(Message::Close(frame)))
-                        }
-                        AsyncSink::NotReady(_) => {
-                            error!("Expected to get NotReady of a Close message, but got something else.");
-                            Err(Error::InvalidClosingState)
-                        }
-                    },
-                    Err(err) => Err(Error::WebSocketError(err)),
-                };
-            }
+            //     return match self.inner.send(WebSocketMessage::Close(frame)) {
+            //         Ok(state) => match state {
+            //             AsyncSink::Ready => Ok(AsyncSink::Ready),
+            //             AsyncSink::NotReady(WebSocketMessage::Close(frame)) => {
+            //                 Ok(AsyncSink::NotReady(Message::Close(frame)))
+            //             }
+            //             AsyncSink::NotReady(_) => {
+            //                 error!("Expected to get NotReady of a Close message, but got something else.");
+            //                 Err(Error::InvalidClosingState)
+            //             }
+            //         },
+            //         Err(err) => Err(Error::WebSocketError(err)),
+            //     };
+            // }
         };
 
         // Send chunks to underlying layer.
@@ -170,7 +173,7 @@ impl Sink for NimiqMessageStream {
 
             #[cfg(feature = "metrics")]
             let buffer_len = buffer.len();
-            match self.inner.start_send(WebSocketMessage::binary(buffer)) {
+            self.inner.send(WsMessage::Binary(buffer)).then(|result| match result {
                 Ok(state) => match state {
                     AsyncSink::Ready => {
                         #[cfg(feature = "metrics")]
@@ -188,7 +191,7 @@ impl Sink for NimiqMessageStream {
                     }
                 },
                 Err(error) => return Err(Error::WebSocketError(error)),
-            };
+            });
 
             remaining -= chunk.len();
         }
