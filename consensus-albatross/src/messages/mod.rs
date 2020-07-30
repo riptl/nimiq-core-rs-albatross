@@ -1,6 +1,7 @@
 pub use self::request_response::RequestResponseMessage;
+use crate::subscription::Subscription;
 use beserial::{Deserialize, Serialize};
-use block_albatross::MacroBlock;
+use block_albatross::{BlockComponents, MacroBlock};
 use hash::Blake2bHash;
 use network_interface::message::*;
 use transaction::Transaction;
@@ -13,7 +14,40 @@ The consensus module uses the following messages:
 201 RequestResponseMessage<BlockHashes>
 202 RequestResponseMessage<RequestEpoch>
 203 RequestResponseMessage<Epoch>
+204 Subscription
+205 BlockAnnouncement
 */
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Object<T: Serialize + Deserialize> {
+    #[beserial(discriminant = 0)]
+    Hash(Blake2bHash),
+    #[beserial(discriminant = 1)]
+    Object(T),
+}
+
+impl<T: Serialize + Deserialize> Object<T> {
+    pub fn with_object(object: T) -> Self {
+        Object::Object(object)
+    }
+
+    pub fn with_hash(hash: Blake2bHash) -> Self {
+        Object::Hash(hash)
+    }
+
+    pub fn is_hash(&self) -> bool {
+        if let Object::Hash(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_object(&self) -> bool {
+        !self.is_hash()
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[repr(u8)]
@@ -98,4 +132,14 @@ pub struct Epoch {
 
 impl Message for RequestResponseMessage<Epoch> {
     const TYPE_ID: u64 = 203;
+}
+
+impl Message for Subscription {
+    const TYPE_ID: u64 = 204;
+}
+
+pub type BlockAnnouncement = Object<BlockComponents>;
+
+impl Message for BlockAnnouncement {
+    const TYPE_ID: u64 = 205;
 }

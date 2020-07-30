@@ -6,8 +6,9 @@ use futures::{FutureExt, StreamExt};
 use hash::Blake2bHash;
 use network_interface::prelude::{Network, Peer};
 use parking_lot::RwLock;
-
+use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
+use tokio::sync::Mutex;
 
 use crate::consensus::Consensus;
 use crate::consensus_agent::ConsensusAgent;
@@ -15,7 +16,6 @@ use crate::error::SyncError;
 use crate::messages::RequestBlockHashesFilter;
 use crate::sync::sync_queue::SyncQueue;
 use crate::sync::SyncProtocol;
-use std::marker::PhantomData;
 
 pub struct SyncingCluster<P: Peer> {
     hashes: Vec<Blake2bHash>,
@@ -43,6 +43,7 @@ pub struct QuickSyncState {
 
 pub struct QuickSync<N> {
     state: RwLock<QuickSyncState>,
+    sync_lock: Mutex<()>,
     _network: PhantomData<N>,
 }
 
@@ -50,6 +51,7 @@ impl<N> Default for QuickSync<N> {
     fn default() -> Self {
         QuickSync {
             state: Default::default(),
+            sync_lock: Mutex::new(()),
             _network: PhantomData,
         }
     }
@@ -253,6 +255,7 @@ impl<N: Network> QuickSync<N> {
 #[async_trait]
 impl<N: Network + 'static> SyncProtocol<N> for QuickSync<N> {
     async fn perform_sync(&self, consensus: Arc<Consensus<N>>) -> Result<(), SyncError> {
+        let lock = self.sync_lock.lock().await;
         self.macro_sync(consensus).await;
         Ok(())
     }
