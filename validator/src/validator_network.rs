@@ -4,7 +4,6 @@ use std::sync::{Arc, Weak};
 
 use failure::Fail;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use tokio;
 
 use block_albatross::signed::AggregateProof;
 use block_albatross::{
@@ -75,6 +74,7 @@ pub enum ValidatorNetworkEvent {
     /// When a fork proof was given
     ForkProof(Box<ForkProof>),
 
+    // When a new view change is added to the aggregated ones
     ViewChangeUpdate(Box<ViewChangeUpdateEvent>),
 
     /// When a valid view change was completed
@@ -84,6 +84,7 @@ pub enum ValidatorNetworkEvent {
     /// times during an epoch - i.e. when a proposal with a higher view number is received.
     PbftProposal(Box<PbftProposal>),
 
+    // When a new PBFT message is added to the aggregated ones
     PbftUpdate(Box<PbftUpdateEvent>),
 
     /// When enough prepare signatures are collected for a proposed macro block
@@ -226,7 +227,7 @@ pub struct ValidatorNetwork {
     state: RwLock<ValidatorNetworkState>,
 
     /// Stores validator contact information and holds references to connected validators
-    /// NOTE: To avoid circular dead-locks, always acquire this after the validator pool lock.
+    /// NOTE: To avoid circular dead-locks, always acquire this after the validator network lock.
     pub validators: Arc<RwLock<ValidatorPool>>,
 
     self_weak: MutableOnce<Weak<ValidatorNetwork>>,
@@ -359,7 +360,7 @@ impl ValidatorNetwork {
         self.broadcast_fork_proof(fork_proof);
     }
 
-    /// Called when we reach finality - i.e. when a macro block was produced. This must be called be the
+    /// Called when we reach finality - i.e. when a macro block was produced. This must be called by the
     /// validator.
     ///
     /// `validator_id`: The index of the validator (a.k.a `pk_idx`), if we're active
@@ -672,7 +673,7 @@ impl ValidatorNetwork {
 
         // The commit handler. This will store the finished commit proof and construct the
         // pBFT proof.
-        let key = block_hash.clone();
+        let key = block_hash;
         pbft.aggregation
             .read()
             .commit_aggregation

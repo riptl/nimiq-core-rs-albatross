@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::ops::Mul;
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::RwLock;
-use tokio;
 
 use account::Account;
 use block_albatross::{
@@ -98,7 +97,7 @@ impl Validator {
         let compressed_public_key = validator_key.public_key.compress();
         let info = ValidatorInfo {
             public_key: compressed_public_key,
-            peer_address: consensus.network.network_config.peer_address().clone(),
+            peer_address: consensus.network.network_config.peer_address(),
             udp_address: None,
             valid_from: consensus.blockchain.block_number(),
         };
@@ -149,7 +148,7 @@ impl Validator {
             this.self_weak.replace(Arc::downgrade(this));
         };
 
-        // Setup event handlers for blockchain events
+        // Setup event handlers for consensus events
         let weak = Arc::downgrade(this);
         let consensus = this
             .consensus
@@ -860,6 +859,10 @@ impl Drop for Validator {
                 .notifier
                 .write()
                 .deregister(listeners.validator_network);
+            self.blockchain
+                .fork_notifier
+                .write()
+                .deregister(listeners.fork);
         }
     }
 }
