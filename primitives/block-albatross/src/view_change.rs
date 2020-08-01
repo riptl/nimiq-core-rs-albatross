@@ -8,7 +8,7 @@ use vrf::VrfSeed;
 use super::signed;
 
 #[derive(
-    Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, SerializeContent, Hash,
+    Clone, Debug, Default, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, SerializeContent, Hash,
 )]
 pub struct ViewChange {
     /// The number of the block for which the view change is constructed (i.e. the block number

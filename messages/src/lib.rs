@@ -111,6 +111,7 @@ pub enum MessageType {
     GetMacroBlocks = 123,
     GetEpochTransactions = 124,
     EpochTransactions = 125,
+    GetValidatorState = 126,
 }
 
 impl Display for MessageType {
@@ -165,6 +166,7 @@ impl Display for MessageType {
             Self::GetMacroBlocks => write!(f, "get-macro-blocks"),
             Self::GetEpochTransactions => write!(f, "get-epoch-transactions"),
             Self::EpochTransactions => write!(f, "epoch-transactions"),
+            Self::GetValidatorState => write!(f, "get-validator-state")
         }
     }
 }
@@ -221,6 +223,7 @@ pub enum Message {
     GetMacroBlocks(Box<GetBlocksMessage>),
     GetEpochTransactions(Box<GetEpochTransactionsMessage>),
     EpochTransactions(Box<EpochTransactionsMessage>),
+    GetValidatorState,
 }
 
 impl Message {
@@ -270,6 +273,7 @@ impl Message {
             Message::GetMacroBlocks(_) => MessageType::GetMacroBlocks,
             Message::GetEpochTransactions(_) => MessageType::GetEpochTransactions,
             Message::EpochTransactions(_) => MessageType::EpochTransactions,
+            Message::GetValidatorState => MessageType::GetValidatorState,
         }
     }
 
@@ -456,6 +460,7 @@ impl Deserialize for Message {
             MessageType::EpochTransactions => {
                 Message::EpochTransactions(Deserialize::deserialize(&mut crc32_reader)?)
             }
+            MessageType::GetValidatorState => Message::GetValidatorState,
         };
 
         // XXX Consume any leftover bytes in the message before computing the checksum.
@@ -543,6 +548,7 @@ impl Serialize for Message {
             Message::EpochTransactions(epoch_transactions) => {
                 epoch_transactions.serialize(&mut v)?
             }
+            Message::GetValidatorState => 0
         };
 
         // write checksum to placeholder
@@ -616,6 +622,7 @@ impl Serialize for Message {
                 get_epoch_transactions.serialized_size()
             }
             Message::EpochTransactions(epoch_transactions) => epoch_transactions.serialized_size(),
+            Message::GetValidatorState => 0,
         };
         size
     }
@@ -690,6 +697,7 @@ pub struct MessageNotifier {
     pub get_macro_blocks: RwLock<PassThroughNotifier<'static, GetBlocksMessage>>,
     pub get_epoch_transactions: RwLock<PassThroughNotifier<'static, GetEpochTransactionsMessage>>,
     pub epoch_transactions: RwLock<PassThroughNotifier<'static, EpochTransactionsMessage>>,
+    pub get_validator_state: RwLock<PassThroughNotifier<'static, ()>>,
 }
 
 impl MessageNotifier {
@@ -747,6 +755,7 @@ impl MessageNotifier {
             Message::GetMacroBlocks(msg) => self.get_macro_blocks.read().notify(*msg),
             Message::GetEpochTransactions(msg) => self.get_epoch_transactions.read().notify(*msg),
             Message::EpochTransactions(msg) => self.epoch_transactions.read().notify(*msg),
+            Message::GetValidatorState => self.get_validator_state.read().notify(()),
         }
     }
 }

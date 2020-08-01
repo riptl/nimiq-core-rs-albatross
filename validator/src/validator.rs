@@ -234,6 +234,9 @@ impl Validator {
             drop(state);
             self.on_slot_change(SlotChange::NextBlock);
         }
+
+        // ask other active validators for their state
+        self.validator_network.request_validator_state();
     }
 
     pub fn on_consensus_lost(&self) {

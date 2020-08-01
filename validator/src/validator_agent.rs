@@ -7,7 +7,7 @@ use futures::{executor, future, StreamExt};
 use parking_lot::RwLock;
 
 use block_albatross::{
-    ForkProof, PbftCommitMessage, PbftPrepareMessage, SignedPbftProposal, ViewChange,
+    ForkProof, PbftCommitMessage, PbftPrepareMessage, SignedPbftProposal, ViewChange, ViewChangeProof,
 };
 use blockchain_albatross::Blockchain;
 use bls::CompressedPublicKey;
@@ -33,6 +33,7 @@ pub enum ValidatorAgentEvent {
     PbftProposal(Box<SignedPbftProposal>),
     PbftPrepare(Box<LevelUpdateMessage<PbftPrepareMessage>>),
     PbftCommit(Box<LevelUpdateMessage<PbftCommitMessage>>),
+    GetValidatorState(PeerId),
 }
 
 pub struct ValidatorAgentState {
@@ -155,6 +156,17 @@ impl ValidatorAgent {
                 Arc::downgrade(this),
                 |this, view_change_proof| {
                     this.on_view_change_proof(view_change_proof);
+                },
+            ));
+        this.peer
+            .channel
+            .msg_notifier
+            .get_validator_state
+            .write()
+            .register(weak_passthru_listener(
+                Arc::downgrade(this),
+                |this, _| {
+                    this.on_get_validator_state();
                 },
             ));
     }
@@ -359,6 +371,16 @@ impl ValidatorAgent {
             .notify(ValidatorAgentEvent::PbftCommit(Box::new(level_update)));
     }
 
+    /// When a GetValidatorState message is received, we notify it so that the
+    /// ValidatorNetwork can deal with it
+    fn on_get_validator_state(&self) {
+        trace!("[GET-VALIDATOR-STATE] Received");
+
+        self.notifier
+            .read()
+            .notify(ValidatorAgentEvent::GetValidatorState(self.peer.peer_address().peer_id.clone()));
+    }
+
     pub fn validator_info(&self) -> Option<ValidatorInfo> {
         self.state
             .read()
@@ -414,6 +436,17 @@ impl ValidatorAgent {
             self.peer
                 .send(&SignedValidatorInfos(unknown_infos))
         ).ok();
+    }
+
+    /// Sends our current validator state to the validator peer
+    pub fn send_validator_state(&self, view_change: ViewChange, proof: ViewChangeProof) {
+        self.peer
+            .channel
+            .send_or_close(
+                Message::ViewChangeProof(Box::new(ViewChangeProofMessage {
+                view_change,
+                proof,
+            })));
     }
 }
 

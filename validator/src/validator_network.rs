@@ -192,6 +192,10 @@ struct ValidatorNetworkState {
     /// Maps (view-change-number, block-number) to the proof that is being aggregated.
     view_changes: HashMap<ViewChange, ViewChangeAggregation>,
 
+    /// Save the last completed view change to get it's proof and send it to any other
+    /// validator requesting the network state
+    last_completed_view_change: Option<ViewChange>,
+
     /// Maps (view-change-number, block-number) to completed view change proofs
     complete_view_changes: HashMap<ViewChange, ViewChangeProof>,
 
@@ -320,6 +324,7 @@ impl ValidatorNetwork {
                     ValidatorAgentEvent::PbftCommit(level_update) => {
                         this.on_pbft_commit_level_update(*level_update);
                     }
+                    ValidatorAgentEvent::GetValidatorState(peer_id) => this.on_get_validator_state(peer_id),
                 },
             ));
 
@@ -540,6 +545,11 @@ impl ValidatorNetwork {
 
         info!("Received view change proof for: {}", view_change);
         let mut state = RwLockUpgradableReadGuard::upgrade(state);
+
+        // Save the last completed view change to send it to any validator that may request it
+        // FIXME: are more than one view change proof per block possible? if so, we should check
+        // here that we don't overwrite a better proof with an older one
+        state.last_completed_view_change = Some(view_change.clone());
 
         // Put into complete view changes
         state
@@ -835,6 +845,21 @@ impl ValidatorNetwork {
         }
     }
 
+    // When a GetValidatorState message is received, we need to send back all the state needed
+    // by the peer validator to be able to make progress
+    fn on_get_validator_state(&self, peer_id: PeerId) {
+        let state = self.state.read();
+
+        // Check that we have everything we need to send the requested state back, and if so, do it
+        if let Some(ref view_change) = state.last_completed_view_change {
+            if let Some(proof) = state.complete_view_changes.get(&view_change) {
+                if let Some(agent) = state.agents.get(&peer_id) {
+                    agent.send_validator_state(view_change.clone(), proof.clone());
+                }
+            }
+        }
+    }
+
     // Public interface: start view changes, pBFT phase, push contributions
 
     /// Starts a new view-change
@@ -994,6 +1019,11 @@ impl ValidatorNetwork {
             view_change,
             proof,
         })));
+    }
+
+    /// XXX: what would be a better way to do this without using deprecated functions
+    pub fn request_validator_state(&self) {
+        self.broadcast_active(Message::GetValidatorState);
     }
 }
 
