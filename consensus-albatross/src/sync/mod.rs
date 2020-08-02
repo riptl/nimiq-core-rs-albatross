@@ -8,6 +8,7 @@ use crate::error::SyncError;
 
 mod quick;
 mod sync_queue;
+mod temporary_blockchain;
 
 #[async_trait]
 pub trait SyncProtocol<N: Network>: Send + Sync + 'static {
