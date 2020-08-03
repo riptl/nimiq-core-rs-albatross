@@ -50,6 +50,7 @@ members = [
   "transaction-builder",
   "utils",
   "validator",
+  "validator-network-interface",
   "vrf",
   "wallet",
   "ws-rpc-server",
