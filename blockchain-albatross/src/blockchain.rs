@@ -653,6 +653,114 @@ impl Blockchain {
         chain_order
     }
 
+    /// Checks a block in the current epoch without validating the state.
+    /// The previous block is given as an argument as this allows to perform preliminary
+    /// checks on blocks even though the predecessor blocks are not pushed yet.
+    /// The checks performed are:
+    /// - Intrinsic checks
+    /// - Signature checks for the block (not transactions)
+    pub fn check_block_basics(
+        &self,
+        block: &Block,
+        previous_block: Option<&Block>,
+        txn_option: Option<&Transaction>,
+    ) -> Result<(), PushError> {
+        let read_txn: ReadTransaction;
+        let txn = match txn_option {
+            Some(txn) => txn,
+            None => {
+                read_txn = ReadTransaction::new(&self.env);
+                &read_txn
+            }
+        };
+
+        // Check (sort of) intrinsic block invariants.
+        if let Err(e) = block.verify(self.network_id) {
+            warn!("Rejecting block - verification failed ({:?})", e);
+            return Err(PushError::InvalidBlock(e));
+        }
+
+        let view_change_proof = match block {
+            Block::Macro(_) => OptionalCheck::Skip,
+            Block::Micro(ref micro_block) => {
+                micro_block.justification.view_change_proof.as_ref().into()
+            }
+        };
+
+        let (slot, _) = self
+            .get_slot_at(block.block_number(), block.view_number(), Some(&txn))
+            .unwrap();
+
+        {
+            let intended_slot_owner = slot.public_key().uncompress_unchecked();
+            // This will also check that the type at this block number is correct.
+            if let Err(e) = self.verify_block_header(
+                &block.header(),
+                view_change_proof,
+                &intended_slot_owner,
+                Some(&txn),
+            ) {
+                warn!("Rejecting block - Bad header / justification");
+                return Err(e);
+            }
+        }
+
+        if let Block::Micro(ref micro_block) = block {
+            let justification = match micro_block.justification.signature.uncompress() {
+                Ok(justification) => justification,
+                Err(_) => {
+                    warn!("Rejecting block - bad justification");
+                    return Err(PushError::InvalidBlock(BlockError::InvalidJustification));
+                }
+            };
+
+            let intended_slot_owner = slot.public_key().uncompress_unchecked();
+            if !intended_slot_owner.verify(&micro_block.header, &justification) {
+                warn!("Rejecting block - invalid justification for intended slot owner");
+                debug!("Block hash: {}", micro_block.header.hash::<Blake2bHash>());
+                debug!("Intended slot owner: {:?}", intended_slot_owner.compress());
+                return Err(PushError::InvalidBlock(BlockError::InvalidJustification));
+            }
+        }
+
+        if let Block::Macro(ref macro_block) = block {
+            // Check Macro Justification
+            match macro_block.justification {
+                None => {
+                    warn!("Rejecting block - macro block without justification");
+                    return Err(PushError::InvalidBlock(BlockError::NoJustification));
+                }
+                Some(ref justification) => {
+                    if let Err(e) = justification.verify(
+                        macro_block.hash(),
+                        &self.current_validators(),
+                        policy::TWO_THIRD_SLOTS,
+                    ) {
+                        warn!(
+                            "Rejecting block - macro block with bad justification: {}",
+                            e
+                        );
+                        return Err(PushError::InvalidBlock(BlockError::InvalidJustification));
+                    }
+                }
+            }
+
+            // The correct construction of the extrinsics is only checked after the block's inherents are applied.
+
+            if let Some(ref extrinsics) = macro_block.extrinsics {
+                let extrinsics_hash: Blake2bHash = extrinsics.hash();
+                if extrinsics_hash != macro_block.header.extrinsics_root {
+                    warn!("Rejecting block - Header extrinsics hash doesn't match real extrinsics hash");
+                    return Err(PushError::InvalidBlock(BlockError::ExtrinsicsHashMismatch));
+                }
+            } else {
+                return Err(PushError::InvalidBlock(BlockError::MissingExtrinsics));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Same as push, but with more options.
     pub fn push_block(&self, block: Block) -> Result<PushResult, PushError> {
         // Only one push operation at a time.
