@@ -15,12 +15,16 @@ use libp2p::{dns, mplex, noise, tcp, websocket, yamux, PeerId, Swarm, Transport}
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::broadcast;
 
-use network_interface::network::{Network as NetworkInterface, NetworkEvent};
+use nimiq_network_interface::network::{Network as NetworkInterface, NetworkEvent};
 
-use crate::limit::LimitBehaviour;
-use crate::message::MessageBehaviour;
-use crate::peer::Peer;
-use crate::behaviour::NimiqBehaviour;
+use crate::{
+    behaviour::NimiqBehaviour,
+    limit::behaviour::LimitBehaviour,
+    message::{
+        behaviour::MessageBehaviour,
+        peer::Peer
+    }
+};
 
 
 #[derive(Debug)]
@@ -248,9 +252,11 @@ mod tests {
     use rand::{thread_rng, Rng};
 
     use beserial::{Deserialize, Serialize};
-    use network_interface::message::Message;
-    use network_interface::network::Network as NetworkInterface;
-    use network_interface::peer::{CloseReason, Peer};
+    use nimiq_network_interface::{
+        message::Message,
+        network::Network as NetworkInterface,
+        peer::{CloseReason, Peer}
+    };
 
     use crate::network::Network;
 

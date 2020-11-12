@@ -20,7 +20,6 @@ impl<P: Peer> std::fmt::Debug for NetworkEvent<P> {
         let (event_name, peer) = match self {
             NetworkEvent::PeerJoined(peer) => ("PeerJoined", peer),
             NetworkEvent::PeerLeft(peer) => ("PeerLeft", peer),
-            NetworkEvent::PeerDisconnect(peer) => ("PeerDisconnect", peer),
         };
 
         f.debug_struct(event_name)
@@ -70,6 +69,9 @@ pub struct ReceiveFromAll<T: Message, P> {
 }
 
 impl<T: Message, P: Peer + 'static> ReceiveFromAll<T, P> {
+    /// TODO:
+    ///
+    ///  - This only listens from all peers that were present when the `ReceiveFromAll` was created.
     pub fn new<N: Network<PeerType = P> + ?Sized>(network: &N) -> Self {
         ReceiveFromAll {
             inner: stream::select_all(network.get_peers().iter().map(|peer| {

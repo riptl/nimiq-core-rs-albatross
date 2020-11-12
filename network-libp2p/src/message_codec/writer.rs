@@ -49,20 +49,13 @@ fn write_from_buf<'w, W>(inner: &mut W, buffer: &mut BytesMut, cx: &mut Context)
 
 #[pin_project]
 pub struct MessageWriter<W, M>
-    where
-        W: AsyncWrite,
-        M: Serialize,
 {
     inner: W,
     buffer: BytesMut,
     _message_type: PhantomData<M>,
 }
 
-impl<W, M> MessageWriter<W, M>
-    where
-        W: AsyncWrite,
-        M: Serialize,
-{
+impl<W, M> MessageWriter<W, M> {
     pub fn new(inner: W) -> Self {
         Self {
             inner,
