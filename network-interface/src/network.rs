@@ -5,7 +5,12 @@ use async_trait::async_trait;
 use futures::stream::{FusedStream, SelectAll};
 use futures::task::{Context, Poll};
 use futures::{future, ready, stream, Stream, StreamExt, TryFutureExt};
-use tokio::sync::broadcast::{Receiver as BroadcastReceiver, RecvError as BroadcastRecvError};
+use tokio::sync::{
+    broadcast::{Receiver as BroadcastReceiver, RecvError as BroadcastRecvError},
+    mpsc,
+};
+
+use beserial::{Serialize, Deserialize};
 
 use crate::message::Message;
 use crate::peer::*;
@@ -13,6 +18,12 @@ use crate::peer::*;
 pub enum NetworkEvent<P> {
     PeerJoined(Arc<P>),
     PeerLeft(Arc<P>),
+}
+
+pub trait Topic {
+    type Item: Serialize + Deserialize + Send;
+
+    fn topic(&self) -> String;
 }
 
 impl<P: Peer> std::fmt::Debug for NetworkEvent<P> {
@@ -40,6 +51,7 @@ impl<P> Clone for NetworkEvent<P> {
 #[async_trait]
 pub trait Network: Send + Sync + 'static {
     type PeerType: Peer + 'static;
+    type Error: std::error::Error;
 
     fn get_peers(&self) -> Vec<Arc<Self::PeerType>>;
     fn get_peer(&self, peer_id: &<Self::PeerType as Peer>::Id) -> Option<Arc<Self::PeerType>>;
@@ -58,6 +70,26 @@ pub trait Network: Send + Sync + 'static {
     fn receive_from_all<T: Message>(&self) -> ReceiveFromAll<T, Self::PeerType> {
         ReceiveFromAll::new(self)
     }
+
+    async fn subscribe<T>(topic: &T) -> Box<dyn Stream<Item = (T::Item, Self::PeerType)> + Send>
+        where
+            T: Topic + Sync;
+
+    async fn publish<T: Topic>(topic: &T, item: T::Item)
+        where
+            T: Topic + Sync;
+
+    async fn dht_get<K, V>(&self, k: &K) -> Result<V, Self::Error>
+        where
+            K: AsRef<[u8]> + Send + Sync,
+            V: Deserialize + Send + Sync;
+
+    async fn dht_put<K, V>(&self, k: &K, v: &V) -> Result<(), Self::Error>
+        where
+            K: AsRef<[u8]> + Send + Sync,
+            V: Serialize + Send + Sync;
+
+    // TODO: dial
 }
 
 // .next() To get next item of stream.

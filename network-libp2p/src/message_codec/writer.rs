@@ -107,7 +107,7 @@ impl<W, M> Sink<&M> for MessageWriter<W, M>
         let n = Serialize::serialized_size(item);
         self_projected.buffer.reserve(n + Header::SIZE);
 
-        let header = Header::new(1, n as u32);
+        let header = Header::new(n as u32);
 
         let mut w = self_projected.buffer.writer();
 

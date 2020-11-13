@@ -253,7 +253,7 @@ mod tests {
     fn put_message<M: Serialize>(buf: &mut BytesMut, message: &M) {
         let n = message.serialized_size();
         buf.reserve(n + Header::SIZE);
-        let header = Header::new(1, n as u32);
+        let header = Header::new(n as u32);
 
         let mut w = buf.writer();
 
