@@ -8,9 +8,11 @@ use futures::{
     AsyncWrite, Sink, ready,
 };
 use pin_project::pin_project;
+use bytes::{BytesMut, Buf, BufMut};
 
 use beserial::{Serialize, SerializingError};
-use bytes::{BytesMut, Buf, BufMut};
+
+use super::header::Header;
 
 
 fn write_from_buf<'w, W>(inner: &mut W, buffer: &mut BytesMut, cx: &mut Context) -> Poll<Result<(), SerializingError>>
@@ -103,13 +105,17 @@ impl<W, M> Sink<&M> for MessageWriter<W, M>
         // Reserve space for the header and message.
         // TODO: Allow for a generic header struct.
         let n = Serialize::serialized_size(item);
-        self_projected.buffer.reserve(n + 2);
+        self_projected.buffer.reserve(n + Header::SIZE);
+
+        let header = Header::new(1, n as u32);
+
+        let mut w = self_projected.buffer.writer();
 
         // Write header (i.e. length of message)
-        self_projected.buffer.put_u16(n as u16);
+        Serialize::serialize(&header, &mut w);
 
         // Serialize the message into the buffer.
-        Serialize::serialize(item, &mut self_projected.buffer.writer())?;
+        Serialize::serialize(item, &mut w)?;
 
         log::trace!("MessageWriter: buffer = {:?}", self_projected.buffer);
 
@@ -154,8 +160,8 @@ mod tests {
 
     use beserial::{Serialize, Deserialize};
 
+    use crate::message_codec::header::Header;
     use super::MessageWriter;
-
 
     #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
     struct TestMessage {
@@ -179,9 +185,6 @@ mod tests {
 
         let data = message_writer.into_inner();
 
-        assert_eq!(data[0], 0);
-        assert_eq!(data[1], n as u8);
-
-        assert_eq!(&test_message.serialize_to_vec()[..], &data[2..])
+        assert_eq!(&test_message.serialize_to_vec()[..], &data[Header::SIZE..])
     }
 }
