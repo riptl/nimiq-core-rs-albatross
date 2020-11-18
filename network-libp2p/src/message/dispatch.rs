@@ -5,7 +5,7 @@ use std::{
 };
 
 use futures::{
-    channel::mpsc,
+    channel::{mpsc, oneshot},
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, WriteHalf},
     lock::Mutex as AsyncMutex,
     pin_mut, SinkExt, StreamExt, Stream, FutureExt,
@@ -18,6 +18,8 @@ use nimiq_network_interface::message::{Message, read_message, peek_type};
 
 pub struct MessageReceiver {
     channels: Arc<Mutex<HashMap<u64, Option<mpsc::Sender<Vec<u8>>>>>>,
+
+    close_tx: Mutex<Option<oneshot::Sender<()>>>,
 }
 
 
@@ -27,10 +29,22 @@ impl MessageReceiver
         let channels = Arc::new(Mutex::new(HashMap::new()));
 
         // FIXME: Poll this from the network behaviour
-        async_std::task::spawn(Self::reader(inbound, Arc::clone(&channels)));
+        let (close_tx, close_rx) = oneshot::channel();
+        async_std::task::spawn(Self::reader(inbound, close_rx, Arc::clone(&channels)));
 
         Self {
             channels,
+            close_tx: Mutex::new(Some(close_tx)),
+        }
+    }
+
+    pub async fn close(&self) {
+        if let Some(close_tx) = self.close_tx.lock().take() {
+            // TODO: handle error
+            close_tx.send(()).unwrap();
+
+            // Remove all channels (i.e. senders, which closes readers too?
+            self.channels.lock().clear();
         }
     }
 
@@ -55,11 +69,17 @@ impl MessageReceiver
         })
     }
 
-    async fn reader<I: AsyncRead + Send + Sync + 'static>(mut inbound: I, channels: Arc<Mutex<HashMap<u64, Option<mpsc::Sender<Vec<u8>>>>>>) -> Result<(), SerializingError> {
+    async fn reader<I: AsyncRead + Send + Sync + 'static>(inbound: I, close_rx: oneshot::Receiver<()>, channels: Arc<Mutex<HashMap<u64, Option<mpsc::Sender<Vec<u8>>>>>>) -> Result<(), SerializingError> {
         pin_mut!(inbound);
 
+        let mut close_rx = close_rx.fuse();
+
         loop {
-            let data = read_message(&mut inbound).await?;
+            let data = futures::select! {
+                data = read_message(&mut inbound).fuse() => data?,
+                _ = close_rx => break,
+            };
+
             let message_type = peek_type(&data)?;
 
             log::debug!("Receiving message: type={}", message_type);
@@ -92,6 +112,8 @@ impl MessageReceiver
             }
         }
 
+        log::debug!("Message dispatcher task terminated");
+
         Ok(())
     }
 }
@@ -112,6 +134,10 @@ impl<O> MessageSender<O>
         Self {
             outbound: AsyncMutex::new(outbound),
         }
+    }
+
+    pub async fn close(&self) {
+        self.outbound.lock().await.close().await.unwrap();
     }
 
     pub async fn send<M: Message>(&self, message: &M) -> Result<(), SerializingError> {
@@ -151,5 +177,10 @@ impl<C> MessageDispatch<C>
             inbound: MessageReceiver::new(reader),
             outbound: MessageSender::new(writer),
         }
+    }
+
+    pub async fn close(&self) {
+        self.inbound.close().await;
+        self.outbound.close().await;
     }
 }

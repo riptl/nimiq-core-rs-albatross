@@ -14,11 +14,10 @@ use crate::message::{
     peer::Peer,
 };
 use crate::{
-    message::handler::{
-        HandlerOutEvent as MessageEvent, HandlerInEvent as MessageAction,
-    },
+    message::handler::{HandlerInEvent as MessageAction},
     limit::handler::HandlerInEvent as LimitAction,
 };
+
 
 #[derive(Default, NetworkBehaviour)]
 #[behaviour(event_process = false, out_event = "NetworkEvent<Peer>", poll_method = "poll_event")]
@@ -68,12 +67,6 @@ impl NetworkBehaviourEventProcess<NetworkEvent<Peer>> for NimiqBehaviour {
         if let Some(waker) = self.waker.take() {
             waker.wake();
         }
-    }
-}
-
-impl From<MessageEvent> for NetworkEvent<Peer> {
-    fn from(_event: MessageEvent) -> Self {
-        unimplemented!();
     }
 }
 

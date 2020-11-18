@@ -1,12 +1,11 @@
 use std::{
     collections::VecDeque,
     sync::Arc,
-    io,
+    pin::Pin,
 };
 
 use futures::{
     task::{Context, Poll, Waker},
-    channel::mpsc,
     channel::oneshot,
     Future,
 };
@@ -18,11 +17,13 @@ use libp2p::{
     PeerId,
 };
 use thiserror::Error;
+use nimiq_network_interface::peer::CloseReason;
 
 use beserial::SerializingError;
 
+
 use super::{
-    peer::{Peer, PeerAction},
+    peer::Peer,
     protocol::MessageProtocol,
     dispatch::MessageDispatch,
     behaviour::MessageConfig,
@@ -34,7 +35,7 @@ pub enum HandlerInEvent {
         peer_id: PeerId,
         outbound: bool,
     },
-    PeerDisconnect {
+    PeerDisconnected {
         peer_id: PeerId,
     }
 }
@@ -43,6 +44,10 @@ pub enum HandlerInEvent {
 pub enum HandlerOutEvent {
     PeerJoined {
         peer: Arc<Peer>,
+    },
+    PeerClosed {
+        peer: Arc<Peer>,
+        reason: CloseReason,
     }
 }
 
@@ -62,6 +67,10 @@ pub struct MessageHandler {
 
     peer: Option<Arc<Peer>>,
 
+    close_rx: Option<oneshot::Receiver<CloseReason>>,
+
+    keep_alive: KeepAlive,
+
     waker: Option<Waker>,
 
     events: VecDeque<ProtocolsHandlerEvent<MessageProtocol, (), HandlerOutEvent, HandlerError>>,
@@ -75,6 +84,8 @@ impl MessageHandler {
             config,
             peer_id: None,
             peer: None,
+            close_rx: None,
+            keep_alive: KeepAlive::Yes,
             waker: None,
             events: VecDeque::new(),
             socket: None,
@@ -145,14 +156,14 @@ impl ProtocolsHandler for MessageHandler {
                 }
             },
 
-            HandlerInEvent::PeerDisconnect { peer_id } => {
+            HandlerInEvent::PeerDisconnected { peer_id: _ } => {
                 assert!(self.peer.is_some());
 
                 self.peer = None;
                 self.wake(); // necessary?
 
                 todo!("FIXME: Peer disconnected");
-            }
+            },
         }
     }
 
@@ -166,15 +177,44 @@ impl ProtocolsHandler for MessageHandler {
     }
 
     fn connection_keep_alive(&self) -> KeepAlive {
-        KeepAlive::Yes
+        self.keep_alive
     }
 
     fn poll(&mut self, cx: &mut Context) -> Poll<ProtocolsHandlerEvent<MessageProtocol, (), HandlerOutEvent, HandlerError>> {
         loop {
+            log::debug!("MessageHandler::poll - iteration");
+
             // Emit event
             if let Some(event) = self.events.pop_front() {
                 log::debug!("MessageHandler: emitting event: {:?}", event);
                 return Poll::Ready(event);
+            }
+
+            // Poll the oneshot receiver that signals us when the peer is closed
+            if let Some(close_tx) = &mut self.close_rx {
+                match Pin::new(close_tx).poll(cx) {
+                    Poll::Ready(Ok(reason)) => {
+                        let peer = Arc::clone(self.peer.as_ref().expect("Expected peer"));
+
+                        log::debug!("MessageHandler: Closing peer: {:?}", peer);
+
+                        // Close connection as soon as possible
+                        self.keep_alive = KeepAlive::No;
+
+                        // Drop peer and socket
+                        self.peer = None;
+                        self.socket = None;
+                        self.close_rx = None;
+
+                        // If the peer signals use that they were closed, we emit that event to the behaviour.
+                        return Poll::Ready(ProtocolsHandlerEvent::Custom(HandlerOutEvent::PeerClosed {
+                            reason,
+                            peer,
+                        }));
+                    },
+                    Poll::Ready(Err(_)) => unimplemented!(), // Channel was closed without message.
+                    Poll::Pending => {},
+                }
             }
 
             // If the peer is already available, poll it and return
@@ -195,13 +235,19 @@ impl ProtocolsHandler for MessageHandler {
                 break;
             }
 
+            assert!(self.peer.is_none());
+            assert!(self.close_rx.is_none());
+
             // Take inbound and outbound and create a peer from it.
             let peer_id = self.peer_id.clone().unwrap();
             let socket = self.socket.take().unwrap();
 
-            let peer = Arc::new(Peer::new(peer_id, socket));
+            let (close_tx, close_rx) = oneshot::channel();
+
+            let peer = Arc::new(Peer::new(peer_id, socket, close_tx));
             log::debug!("New peer: {:?}", peer);
 
+            self.close_rx = Some(close_rx);
             self.peer = Some(Arc::clone(&peer));
 
             // Send peer to behaviour

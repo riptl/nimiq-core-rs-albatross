@@ -343,6 +343,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[test_env_log::test]
     async fn one_peer_can_talk_to_another() {
         let (net1, net2) = create_connected_networks().await;
 
@@ -361,6 +362,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[test_env_log::test]
     async fn both_peers_can_talk_with_each_other() {
         let (net1, net2) = create_connected_networks().await;
 
@@ -383,6 +385,7 @@ mod tests {
     // FIXME
     #[ignore]
     #[tokio::test]
+    #[test_env_log::test]
     async fn connections_are_properly_closed() {
         let (net1, net2) = create_connected_networks().await;
 

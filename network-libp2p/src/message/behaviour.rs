@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use futures::task::{Context, Poll};
+use futures::task::{Context, Poll, Waker};
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::Multiaddr;
 use libp2p::swarm::{
@@ -15,7 +15,7 @@ use libp2p::{
 use nimiq_network_interface::network::NetworkEvent;
 
 use super::{
-    peer::{Peer, PeerAction},
+    peer::Peer,
     handler::{MessageHandler, HandlerInEvent, HandlerOutEvent},
 };
 
@@ -40,6 +40,8 @@ pub struct MessageBehaviour {
     events: VecDeque<NetworkBehaviourAction<HandlerInEvent, NetworkEvent<Peer>>>,
 
     peers: HashMap<PeerId, Arc<Peer>>,
+
+    waker: Option<Waker>,
 }
 
 impl Default for MessageBehaviour {
@@ -54,6 +56,18 @@ impl MessageBehaviour {
             config,
             peers: HashMap::new(),
             events: VecDeque::new(),
+            waker: None,
+        }
+    }
+
+    fn push_event(&mut self, event: NetworkBehaviourAction<HandlerInEvent, NetworkEvent<Peer>>) {
+        self.events.push_back(event);
+        self.wake();
+    }
+
+    fn wake(&self) {
+        if let Some(waker) = &self.waker {
+            waker.wake_by_ref();
         }
     }
 }
@@ -74,6 +88,23 @@ impl NetworkBehaviour for MessageBehaviour {
         log::debug!("Peer connected: {:?}", peer_id);
     }
 
+    fn inject_disconnected(&mut self, peer_id: &PeerId) {
+        let peer = self
+            .peers
+            .remove(peer_id)
+            .expect("Unknown peer disconnected");
+
+        log::debug!("Peer disconnected: {:?}", peer);
+
+        self.events.push_back(NetworkBehaviourAction::NotifyHandler {
+            peer_id: peer_id.clone(),
+            handler: NotifyHandler::All,
+            event: HandlerInEvent::PeerDisconnected {
+                peer_id: peer_id.clone(),
+            },
+        });
+    }
+
     fn inject_connection_established(&mut self, peer_id: &PeerId, connection_id: &ConnectionId, connected_point: &ConnectedPoint) {
         log::debug!("Connection established: peer_id={:?}, connection_id={:?}, connected_point={:?}", peer_id, connection_id, connected_point);
 
@@ -87,23 +118,6 @@ impl NetworkBehaviour for MessageBehaviour {
         });
     }
 
-    fn inject_disconnected(&mut self, peer_id: &PeerId) {
-        let peer = self
-            .peers
-            .remove(peer_id)
-            .expect("Unknown peer disconnected");
-
-        log::debug!("Peer disconnected: {:?}", peer);
-
-        self.events.push_back(NetworkBehaviourAction::NotifyHandler {
-            peer_id: peer_id.clone(),
-            handler: NotifyHandler::All,
-            event: HandlerInEvent::PeerDisconnect {
-                peer_id: peer_id.clone(),
-            },
-        });
-    }
-
     fn inject_event(
         &mut self,
         peer_id: PeerId,
@@ -113,24 +127,29 @@ impl NetworkBehaviour for MessageBehaviour {
         log::debug!("MessageBehaviour::inject_event: peer_id={:?}: {:?}", peer_id, event);
         match event {
             HandlerOutEvent::PeerJoined { peer } => {
-                self.events.push_back(NetworkBehaviourAction::GenerateEvent(NetworkEvent::PeerJoined(peer)))
+                self.push_event(NetworkBehaviourAction::GenerateEvent(NetworkEvent::PeerJoined(peer)));
             },
-            /*HandlerOutEvent::PeerLeft { peer } => {
-                self.events.push_back(NetworkEvent::PeerDisconnect(peer))
-            }*/
+            HandlerOutEvent::PeerClosed { peer, reason } => {
+                log::debug!("Peer closed: {:?}, reason={:?}", peer, reason);
+                self.push_event(NetworkBehaviourAction::GenerateEvent(NetworkEvent::PeerLeft(peer)));
+            }
         }
     }
 
     fn poll(
         &mut self,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         _params: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<HandlerInEvent, NetworkEvent<Peer>>> {
-        // TODO: Store waker in behaviour and wake when an event is pushed onto the queue.
-
         // Emit custom events.
         if let Some(event) = self.events.pop_front() {
+            log::debug!("MessageBehaviour::poll: Emitting event: {:?}", event);
             return Poll::Ready(event);
+        }
+
+        // Remember the waker
+        if self.waker.is_none() {
+            self.waker = Some(cx.waker().clone());
         }
 
         Poll::Pending
