@@ -169,7 +169,7 @@ impl Network {
         Ok(transport
             .upgrade(core::upgrade::Version::V1)
             .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
-            .multiplex(yamux::Config::default())
+            .multiplex(yamux::YamuxConfig::default())
             .timeout(std::time::Duration::from_secs(20))
             .boxed())
     }

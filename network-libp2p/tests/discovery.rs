@@ -50,7 +50,7 @@ impl TestNode {
         let transport = base_transport
             .upgrade(Version::V1) // `Version::V1Lazy` Allows for 0-RTT negotiation
             .authenticate(NoiseConfig::xx(noise_keys).into_authenticated())
-            .multiplex(yamux::Config::default())
+            .multiplex(yamux::YamuxConfig::default())
             .timeout(Duration::from_secs(20))
             .boxed();
 

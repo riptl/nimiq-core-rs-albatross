@@ -182,8 +182,6 @@ impl ProtocolsHandler for MessageHandler {
 
     fn poll(&mut self, cx: &mut Context) -> Poll<ProtocolsHandlerEvent<MessageProtocol, (), HandlerOutEvent, HandlerError>> {
         loop {
-            log::debug!("MessageHandler::poll - iteration");
-
             // Emit event
             if let Some(event) = self.events.pop_front() {
                 log::debug!("MessageHandler: emitting event: {:?}", event);
