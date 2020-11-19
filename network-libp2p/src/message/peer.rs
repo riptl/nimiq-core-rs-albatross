@@ -26,7 +26,7 @@ use crate::network::NetworkError;
 pub struct Peer {
     pub id: PeerId,
 
-    socket: MessageDispatch<NegotiatedSubstream>,
+    pub(crate) socket: MessageDispatch<NegotiatedSubstream>,
 
     close_tx: Mutex<Option<oneshot::Sender<CloseReason>>>,
 }
@@ -39,6 +39,8 @@ impl Peer {
             close_tx: Mutex::new(Some(close_tx)),
         }
     }
+
+
 }
 
 impl std::fmt::Debug for Peer {
@@ -68,6 +70,7 @@ impl Hash for Peer {
         self.id.hash(state)
     }
 }
+
 
 #[async_trait]
 impl PeerInterface for Peer {

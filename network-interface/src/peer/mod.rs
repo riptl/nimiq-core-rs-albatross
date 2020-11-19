@@ -15,6 +15,7 @@ pub mod dispatch;
 #[derive(Copy, Clone, Debug)]
 pub enum CloseReason {
     Other,
+    RemoteClosed,
 }
 
 #[derive(Debug, Error)]

@@ -22,13 +22,13 @@ use super::{
 
 #[derive(Clone)]
 pub struct MessageConfig {
-    sender_buffer_size: usize,
+    // TODO
 }
 
 impl Default for MessageConfig {
     fn default() -> Self {
         Self {
-            sender_buffer_size: 64,
+
         }
     }
 }
@@ -60,6 +60,14 @@ impl MessageBehaviour {
         }
     }
 
+    pub fn get_peers(&self) -> impl Iterator<Item=&Arc<Peer>> {
+        self.peers.values()
+    }
+
+    pub fn get_peer(&self, peer_id: &PeerId) -> Option<&Arc<Peer>> {
+        self.peers.get(peer_id)
+    }
+
     fn push_event(&mut self, event: NetworkBehaviourAction<HandlerInEvent, NetworkEvent<Peer>>) {
         self.events.push_back(event);
         self.wake();
@@ -84,29 +92,16 @@ impl NetworkBehaviour for MessageBehaviour {
         vec![]
     }
 
-    fn inject_connected(&mut self, peer_id: &PeerId) {
-        log::debug!("Peer connected: {:?}", peer_id);
+    fn inject_connected(&mut self, _peer_id: &PeerId) {
     }
 
     fn inject_disconnected(&mut self, peer_id: &PeerId) {
-        let peer = self
-            .peers
-            .remove(peer_id)
-            .expect("Unknown peer disconnected");
-
-        log::debug!("Peer disconnected: {:?}", peer);
-
-        self.events.push_back(NetworkBehaviourAction::NotifyHandler {
-            peer_id: peer_id.clone(),
-            handler: NotifyHandler::All,
-            event: HandlerInEvent::PeerDisconnected {
-                peer_id: peer_id.clone(),
-            },
-        });
+        // No handler exists anymore.
+        log::debug!("inject_disconnected: {:?}", peer_id);
     }
 
     fn inject_connection_established(&mut self, peer_id: &PeerId, connection_id: &ConnectionId, connected_point: &ConnectedPoint) {
-        log::debug!("Connection established: peer_id={:?}, connection_id={:?}, connected_point={:?}", peer_id, connection_id, connected_point);
+        log::info!("Connection established: peer_id={:?}, connection_id={:?}, connected_point={:?}", peer_id, connection_id, connected_point);
 
         self.events.push_back(NetworkBehaviourAction::NotifyHandler {
             peer_id: peer_id.clone(),
@@ -118,6 +113,16 @@ impl NetworkBehaviour for MessageBehaviour {
         });
     }
 
+    fn inject_connection_closed(&mut self, peer_id: &PeerId, connection_id: &ConnectionId, connected_point: &ConnectedPoint) {
+        log::info!("Connection closed: peer_id={:?}, connection_id={:?}, connected_point={:?}", peer_id, connection_id, connected_point);
+
+        // If we still know this peer, remove it and emit an `PeerLeft` event to the swarm.
+        if let Some(peer) = self.peers.remove(peer_id) {
+            log::debug!("Peer disconnected: {:?}", peer);
+            self.push_event(NetworkBehaviourAction::GenerateEvent(NetworkEvent::PeerLeft(peer)));
+        }
+    }
+
     fn inject_event(
         &mut self,
         peer_id: PeerId,
@@ -127,10 +132,12 @@ impl NetworkBehaviour for MessageBehaviour {
         log::debug!("MessageBehaviour::inject_event: peer_id={:?}: {:?}", peer_id, event);
         match event {
             HandlerOutEvent::PeerJoined { peer } => {
+                self.peers.insert(peer_id, Arc::clone(&peer));
                 self.push_event(NetworkBehaviourAction::GenerateEvent(NetworkEvent::PeerJoined(peer)));
             },
             HandlerOutEvent::PeerClosed { peer, reason } => {
                 log::debug!("Peer closed: {:?}, reason={:?}", peer, reason);
+                self.peers.remove(&peer_id);
                 self.push_event(NetworkBehaviourAction::GenerateEvent(NetworkEvent::PeerLeft(peer)));
             }
         }

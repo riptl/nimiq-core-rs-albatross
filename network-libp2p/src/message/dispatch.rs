@@ -8,6 +8,7 @@ use futures::{
     channel::{mpsc, oneshot},
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, WriteHalf},
     lock::Mutex as AsyncMutex,
+    task::{Context, Poll},
     pin_mut, SinkExt, StreamExt, Stream, FutureExt,
 };
 use parking_lot::Mutex;
@@ -16,10 +17,17 @@ use beserial::SerializingError;
 use nimiq_network_interface::message::{Message, read_message, peek_type};
 
 
+/// # TODO
+///
+///  - Refactor to not use a spawn to handle the dispatching. Instead just add a poll method and poll it from the
+///    handler.
+///
 pub struct MessageReceiver {
     channels: Arc<Mutex<HashMap<u64, Option<mpsc::Sender<Vec<u8>>>>>>,
 
     close_tx: Mutex<Option<oneshot::Sender<()>>>,
+
+    error_rx: Mutex<oneshot::Receiver<SerializingError>>,
 }
 
 
@@ -27,14 +35,32 @@ impl MessageReceiver
 {
     pub fn new<I: AsyncRead + Send + Sync + 'static>(inbound: I) -> Self {
         let channels = Arc::new(Mutex::new(HashMap::new()));
-
-        // FIXME: Poll this from the network behaviour
         let (close_tx, close_rx) = oneshot::channel();
-        async_std::task::spawn(Self::reader(inbound, close_rx, Arc::clone(&channels)));
+        let (error_tx, error_rx) = oneshot::channel();
+
+        async_std::task::spawn({
+            let channels = Arc::clone(&channels);
+
+            async move {
+                if let Err(e) = Self::reader(inbound, close_rx, channels).await {
+                    log::error!("Peer::reader: error: {}", e);
+                    error_tx.send(e).unwrap();
+                }
+            }
+        });
 
         Self {
             channels,
             close_tx: Mutex::new(Some(close_tx)),
+            error_rx: Mutex::new(error_rx),
+        }
+    }
+
+    pub(crate) fn poll_error(&self, cx: &mut Context) -> Poll<Option<SerializingError>> {
+        match self.error_rx.lock().poll_unpin(cx) {
+            Poll::Ready(Ok(e)) => Poll::Ready(Some(e)),
+            Poll::Ready(Err(_)) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 
