@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     task::{Context, Poll},
     sync::Arc,
     collections::BTreeMap,
@@ -50,6 +49,10 @@ pub struct BlockQueueConfig {
 
     /// How many blocks ahead we will buffer.
     window_max: u32,
+
+    /// The min size a gap at the head needs to be, to issue a request for these missing blocks. If `None`, doesn't
+    /// request any gaps.
+    request_gaps: Option<usize>,
 }
 
 impl Default for BlockQueueConfig {
@@ -57,6 +60,7 @@ impl Default for BlockQueueConfig {
         Self {
             buffer_max: 4 * policy::BATCH_LENGTH as usize,
             window_max: 2 * policy::BATCH_LENGTH,
+            request_gaps: None,
         }
     }
 }
@@ -110,9 +114,11 @@ impl Inner {
             // Block inside buffer window
             self.insert_into_buffer(block);
 
-            // Request missing blocks
-            todo!()
-            //self.request_component.request_missing_blocks()
+            if let Some(_n) = self.config.request_gaps {
+                // Request missing blocks, if the gap is sufficiently large, or after a timeout?
+                todo!()
+                //self.request_component.request_missing_blocks()
+            }
         }
     }
 
@@ -130,9 +136,12 @@ impl Inner {
     fn push_buffered(&mut self) {
         loop {
             let head_height = self.blockchain.block_number();
+            log::trace!("head_height = {}", head_height);
 
             // Check if queued block can be pushed to block chain
             if let Some(entry) = self.buffer.first_entry() {
+                log::trace!("first entry: {:?}", entry);
+
                 if *entry.key() > head_height + 1 {
                     break;
                 }
@@ -149,7 +158,8 @@ impl Inner {
                         block.block_number(),
                         head_height,
                         self.buffer.len(),
-                    )
+                    );
+                    self.push_block(block);
                 }
             }
             else {
@@ -194,27 +204,41 @@ impl BlockQueue {
             }
         }
     }
+
+    /// Returns an iterator over the buffered blocks
+    pub fn buffered_blocks(&self) -> impl Iterator<Item=(u32, &[Block])> {
+        self.inner.buffer.iter().map(|(block_number, blocks)| (*block_number, blocks.as_ref()))
+    }
 }
 
-impl Future for BlockQueue {
-    type Output = ();
+impl Stream for BlockQueue {
+    type Item = ();
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let this = self.project();
 
         // Note: I think it doesn't matter what is done first
 
         // First, try to get as many blocks from the gossipsub stream as possible
         match this.block_stream.poll_next(cx) {
-            Poll::Ready(Some(block)) => this.inner.on_block_announced(block),
-            Poll::Ready(None) => return Poll::Ready(()),
+            Poll::Ready(Some(block)) => {
+                this.inner.on_block_announced(block);
+                return Poll::Ready(Some(()));
+            },
+
+            // If the block_stream is exhausted, we quit as well
+            Poll::Ready(None) => return Poll::Ready(None),
+
             Poll::Pending => {},
         }
 
         // Then, read all the responses we got for our missing blocks requests
         match this.request_component.poll_next(cx) {
-            Poll::Ready(Some(blocks)) => this.inner.on_missing_blocks_received(blocks),
-            Poll::Ready(None) => {}, // ignore?
+            Poll::Ready(Some(blocks)) => {
+                this.inner.on_missing_blocks_received(blocks);
+                return Poll::Ready(Some(()))
+            },
+            Poll::Ready(None) => panic!("The request_component stream is exhausted"),
             Poll::Pending => {},
         }
 
