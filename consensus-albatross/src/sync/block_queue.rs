@@ -1,29 +1,55 @@
 use std::{
     task::{Context, Poll},
     sync::Arc,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     pin::Pin,
 };
 
-use futures::stream::{
-    BoxStream, Stream,
+use futures::{
+    channel::mpsc,
+    stream::{BoxStream, Stream}
 };
 use pin_project::pin_project;
 
-use nimiq_blockchain_albatross::Blockchain;
+use nimiq_blockchain_albatross::{Blockchain, PushResult};
 use nimiq_block_albatross::Block;
 use nimiq_network_interface::network::Topic;
 use nimiq_primitives::policy;
+use nimiq_hash::Blake2bHash;
 
-// mock
-#[derive(Clone, Debug, Default)]
-pub struct PeerTrackingAndRequestComponent;
 
-impl Stream for PeerTrackingAndRequestComponent {
+#[pin_project]
+#[derive(Debug)]
+pub struct MockRequestComponent {
+    pub tx: mpsc::UnboundedSender<(Blake2bHash, Vec<Blake2bHash>)>,
+    #[pin]
+    pub rx: mpsc::UnboundedReceiver<Vec<Block>>,
+}
+
+impl MockRequestComponent {
+    pub fn new() -> (Self, mpsc::UnboundedReceiver<(Blake2bHash, Vec<Blake2bHash>)>, mpsc::UnboundedSender<Vec<Block>>) {
+        let (tx1, rx1) = mpsc::unbounded();
+        let (tx2, rx2) = mpsc::unbounded();
+
+        (Self { tx: tx1, rx: rx2 }, rx1, tx2)
+    }
+
+    fn request_missing_blocks(&mut self, target_block_hash: Blake2bHash, locators: Vec<Blake2bHash>) {
+        self.tx.unbounded_send((target_block_hash, locators)).ok(); // ignore error
+    }
+}
+
+impl Default for MockRequestComponent {
+    fn default() -> Self {
+        Self::new().0
+    }
+}
+
+impl Stream for MockRequestComponent {
     type Item = Vec<Block>;
 
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<Option<Self::Item>> {
-        unimplemented!()
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.project().rx.poll_next(cx)
     }
 }
 
@@ -49,10 +75,6 @@ pub struct BlockQueueConfig {
 
     /// How many blocks ahead we will buffer.
     window_max: u32,
-
-    /// The min size a gap at the head needs to be, to issue a request for these missing blocks. If `None`, doesn't
-    /// request any gaps.
-    request_gaps: Option<usize>,
 }
 
 impl Default for BlockQueueConfig {
@@ -60,7 +82,6 @@ impl Default for BlockQueueConfig {
         Self {
             buffer_max: 4 * policy::BATCH_LENGTH as usize,
             window_max: 2 * policy::BATCH_LENGTH,
-            request_gaps: None,
         }
     }
 }
@@ -83,7 +104,7 @@ struct Inner {
 }
 
 impl Inner {
-    fn on_block_announced(&mut self, block: Block) {
+    fn on_block_announced(&mut self, block: Block, mut request_component: Pin<&mut MockRequestComponent>) {
         let block_height = block.block_number();
         let head_height = self.blockchain.block_number();
 
@@ -111,25 +132,78 @@ impl Inner {
             )
         }
         else {
-            // Block inside buffer window
+            let block_hash = block.hash();
+
+            // Put block inside buffer window
             self.insert_into_buffer(block);
 
-            if let Some(_n) = self.config.request_gaps {
-                // Request missing blocks, if the gap is sufficiently large, or after a timeout?
-                todo!()
-                //self.request_component.request_missing_blocks()
-            }
+            log::trace!("Requesting missing blocks: target_hash = {}", block_hash);
+
+            // TODO: Send block locators
+            request_component.request_missing_blocks(block_hash, vec![]);
         }
     }
 
-    fn on_missing_blocks_received(&mut self, _blocks: Vec<Block>) {
-        todo!();
+    fn on_missing_blocks_received(&mut self, blocks: Vec<Block>) {
+        let mut it = blocks.into_iter();
+
+        // Hashes of invalid blocks
+        let mut invalid_blocks = HashSet::new();
+
+        // Try to push blocks, until we encounter an inferior or invalid block
+        while let Some(block) = it.next() {
+            let block_hash = block.hash();
+
+            log::trace!("Pushing block #{} from missing blocks response", block.block_number());
+
+            match self.blockchain.push(block) {
+                Ok(PushResult::Ignored) => {
+                    log::warn!("Inferior chain - Aborting");
+                    invalid_blocks.insert(block_hash);
+                    break;
+                },
+                Err(e) => {
+                    log::warn!("Failed to push block: {}", e);
+                    invalid_blocks.insert(block_hash);
+                    break;
+                },
+                Ok(result) => {
+                    log::trace!("Block pushed: {:?}", result);
+                },
+            }
+        }
+
+        // If there are remaining blocks in the iterator, those are invalid.
+        it.for_each(|block| { invalid_blocks.insert(block.hash()); });
+
+        if !invalid_blocks.is_empty() {
+            log::trace!("Removing any blocks that depend on: {:?}", invalid_blocks);
+
+            // Iterate over all offsets, remove element if no blocks remain at that offset.
+            self.buffer.drain_filter(|_block_number, blocks| {
+                // Iterate over all blocks at an offset, remove block, if parent is invalid
+                blocks.drain_filter(|block| {
+                    if invalid_blocks.contains(block.parent_hash()) {
+                        log::trace!("Removing block because parent is invalid: {}", block.hash());
+                        invalid_blocks.insert(block.hash());
+                        true
+                    }
+                    else {
+                        false
+                    }
+                });
+                blocks.is_empty()
+            });
+        }
+
+        // We might be able to push buffered blocks now
+        self.push_buffered();
     }
 
     fn push_block(&mut self, block: Block) {
         match self.blockchain.push(block) {
-            Ok(result) => log::debug!("Block pushed: {:?}", result),
-            Err(e) => log::error!("Failed to push block: {}", e),
+            Ok(result) => log::trace!("Block pushed: {:?}", result),
+            Err(e) => log::warn!("Failed to push block: {}", e),
         }
     }
 
@@ -180,7 +254,7 @@ impl Inner {
 pub struct BlockQueue {
     /// The Peer Tracking and Request Component.
     #[pin]
-    request_component: PeerTrackingAndRequestComponent,
+    request_component: MockRequestComponent,
 
     /// The blocks received via gossipsub.
     #[pin]
@@ -191,7 +265,7 @@ pub struct BlockQueue {
 }
 
 impl BlockQueue {
-    pub fn new(config: BlockQueueConfig, blockchain: Arc<Blockchain>, request_component: PeerTrackingAndRequestComponent, block_stream: BlockStream) -> Self {
+    pub fn new(config: BlockQueueConfig, blockchain: Arc<Blockchain>, request_component: MockRequestComponent, block_stream: BlockStream) -> Self {
         let buffer = BTreeMap::new();
 
         Self {
@@ -222,7 +296,7 @@ impl Stream for BlockQueue {
         // First, try to get as many blocks from the gossipsub stream as possible
         match this.block_stream.poll_next(cx) {
             Poll::Ready(Some(block)) => {
-                this.inner.on_block_announced(block);
+                this.inner.on_block_announced(block, this.request_component);
                 return Poll::Ready(Some(()));
             },
 
