@@ -181,4 +181,8 @@ impl Network for MockNetwork {
     async fn dial_address(&self, address: MockAddress) -> Result<(), Self::Error> {
         self.dial_mock_address(address)
     }
+
+    fn get_local_peer_id(&self) -> MockPeerId {
+        self.address.into()
+    }
 }

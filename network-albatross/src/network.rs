@@ -469,4 +469,8 @@ impl NetworkInterface for Network {
     async fn dial_address(&self, _address: String) -> Result<(), Self::Error> {
         unimplemented!()
     }
+
+    fn get_local_peer_id(&self) -> <Self::PeerType as PeerInterface>::Id {
+        unimplemented!()
+    }
 }
