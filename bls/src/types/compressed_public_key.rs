@@ -1,8 +1,7 @@
-use std::{cmp::Ordering, fmt, str::FromStr};
+use std::{cmp::Ordering, fmt, io::Error, str::FromStr};
 
-use algebra::mnt6_753::G2Affine;
-use algebra::SerializationError;
-use algebra_core::curves::AffineCurve;
+use ark_ec::AffineCurve;
+use ark_mnt6_753::G2Affine;
 
 #[cfg(feature = "beserial")]
 use beserial::Deserialize;
@@ -23,7 +22,7 @@ impl CompressedPublicKey {
     pub const SIZE: usize = 285;
 
     /// Transforms the compressed form back into the projective form.
-    pub fn uncompress(&self) -> Result<PublicKey, SerializationError> {
+    pub fn uncompress(&self) -> Result<PublicKey, Error> {
         let affine_point: G2Affine = BeDeserialize::deserialize(&mut &self.public_key[..])?;
         Ok(PublicKey {
             public_key: affine_point.into_projective(),
@@ -91,10 +90,7 @@ impl FromStr for CompressedPublicKey {
 mod serde_derive {
     // TODO: Replace this with a generic serialization using `ToHex` and `FromHex`.
 
-    use std::{
-        str::FromStr,
-        borrow::Cow,
-    };
+    use std::{borrow::Cow, str::FromStr};
 
     use serde::{
         de::{Deserialize, Deserializer, Error},
