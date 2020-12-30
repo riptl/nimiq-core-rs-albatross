@@ -293,10 +293,14 @@ impl<N: ValidatorNetwork + 'static> TendermintInterface<N> {
         while let Some((msg, _)) = self.proposal_stream.as_mut().unwrap().next().await {
             // Check if the proposal comes from the correct validator and the signature of the
             // proposal is valid. If not, keep awaiting.
-            if validator_id == msg.signer_idx && msg.verify(&validator_key) {
-                return msg.message;
+            if validator_id == msg.signer_idx {
+                if msg.verify(&validator_key) {
+                    return msg.message;
+                } else {
+                    error!("Tendermint - await_proposal: Invalid signature");
+                }
             } else {
-                error!("Tendermint - await_proposal: Invalid validator id or signature");
+                error!("Tendermint - await_proposal: Invalid validator id. Expected {}, found {}", validator_id, msg.signer_idx);
             }
         }
 
