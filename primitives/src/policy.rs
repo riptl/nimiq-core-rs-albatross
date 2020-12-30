@@ -16,7 +16,7 @@ pub const SLOTS: u16 = 512;
 pub const TWO_THIRD_SLOTS: u16 = (2 * SLOTS + 3 - 1) / 3;
 
 /// Length of a batch including the macro block
-pub const BATCH_LENGTH: u32 = 32; // TODO Set
+pub const BATCH_LENGTH: u32 = 4; // TODO Set
 
 /// How many batches constitute an epoch
 pub const BATCHES_PER_EPOCH: u32 = 4; // TODO Set

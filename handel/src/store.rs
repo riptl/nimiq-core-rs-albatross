@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use collections::bitset::BitSet;
 
-use crate::contribution::AggregatableContribution;
+use crate::{contribution::AggregatableContribution, identity::Identity};
 use crate::partitioner::Partitioner;
 
 pub trait ContributionStore: Send + Sync {
     type Contribution: AggregatableContribution;
 
     /// Put `signature` into the store for level `level`.
-    fn put(&mut self, contribution: Self::Contribution, level: usize);
+    fn put(&mut self, contribution: Self::Contribution, level: usize, id: Identity);
 
     /// Return the number of the current best level.
     fn best_level(&self) -> usize;
@@ -139,18 +139,18 @@ impl<P: Partitioner, C: AggregatableContribution> ReplaceStore<P, C> {
 impl<P: Partitioner, C: AggregatableContribution> ContributionStore for ReplaceStore<P, C> {
     type Contribution = C;
 
-    fn put(&mut self, contribution: Self::Contribution, level: usize) {
-        trace!("Putting signature into store (level {}): {:?}", level, contribution,);
+    fn put(&mut self, contribution: Self::Contribution, level: usize, identity: Identity) {
+        debug!("Putting signature into store (level {}): {:?} - #{:?}", level, contribution, identity);
 
-        if contribution.num_contributors() == 1 {
+        if let Identity::Single(id) = identity {
             self.individual_verified
                 .get_mut(level)
                 .unwrap_or_else(|| panic!("Missing Level {}", level))
-                .insert(contribution.contributor());
+                .insert(id);
             self.individual_contributions
                 .get_mut(level)
                 .unwrap_or_else(|| panic!("Missing Level {}", level))
-                .insert(contribution.contributor(), contribution.clone());
+                .insert(id, contribution.clone());
         }
 
         if let Some(best_contribution) = self.check_merge(&contribution, level) {

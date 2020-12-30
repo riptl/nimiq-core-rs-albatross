@@ -1,5 +1,8 @@
+use std::collections::HashSet;
+
 use bls::PublicKey;
-use handel::identity::{IdentityRegistry, WeightRegistry};
+use collections::BitSet;
+use handel::identity::{Identity, IdentityRegistry, WeightRegistry};
 use primitives::policy;
 use primitives::slot::{SlotCollection, ValidatorSlots};
 
@@ -36,6 +39,60 @@ impl IdentityRegistry for ValidatorRegistry {
                     .uncompress()
                     .map(|c| *c) // necessary?
             })
+    }
+
+    fn signers_identity(&self, slots: &BitSet) -> Identity {
+        if slots.len() == 0 {
+            // if there is no signers there is no identity.
+            debug!("No Signer - no slots");
+            Identity::None
+        } else {
+            // create a set of validator ids corresponding to the slots
+            let mut ids: HashSet<u16> = HashSet::new();
+            for slot in slots.iter() {
+                error!("{}", slot);
+                // insert each validator_id if there is one.
+                if let Some(id) = self.validators.get_band_number_by_slot_number(slot as u16) {
+                    let _ = ids.insert(id);
+                } else {
+                    // If there is None this bitset is not valid and must be rejected
+                    debug!("No Signer - slot not found");
+                    return Identity::None;
+                }
+            }
+
+            // if there is exactly no signer it needs to be rejected.
+            // should never happen as those get rejected earlier.
+            if ids.is_empty() {
+                debug!("No Sig - set empty");
+                Identity::None
+            } else {
+                // make sure that the bitset for the given validator's slots is exactly the same as the once given,
+                // as otherwise there would be a 'partial' slot layout for at least one of the validators.
+                // Since handel will not combine overlapping contributions those need to be rejected.
+                // this holds for Single and Multiple signatories.
+                let mut validators_slots = BitSet::new();
+                for validator_id in ids.iter() {
+                    for slot in self.validators.get_slots(*validator_id).iter() {
+                        validators_slots.insert(*slot as usize);
+                    }
+                }
+
+                if &validators_slots != slots {
+                    // reject any slots which are not exhaustive for their validators.
+                    debug!("No Sig - slots do not match");
+                    Identity::None
+                } else {
+                    if ids.len() == 1 {
+                        debug!("Single Sig");
+                        Identity::Single(*ids.iter().next().unwrap() as usize)
+                    } else {
+                        debug!("Multi Sig");
+                        Identity::Multiple(ids.iter().map(|id| *id as usize).collect())
+                    }
+                }
+            }
+        }
     }
 }
 

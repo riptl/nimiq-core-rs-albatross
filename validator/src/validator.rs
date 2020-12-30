@@ -150,7 +150,7 @@ impl<TNetwork: Network, TValidatorNetwork: ValidatorNetwork>
         // Also the setting up of our own public key record should probably not be done here but in `init` instead.
         tokio::spawn(async move {
             if let Err(err) = nw.set_public_key(&key.public_key.compress(), &key.secret_key).await {
-                error!("could not set up DHT rwcord: {:?}", err);
+                error!("could not set up DHT record: {:?}", err);
             }
             nw.set_validators(validator_keys).await;
         });
