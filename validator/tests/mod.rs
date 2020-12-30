@@ -4,12 +4,15 @@ use rand::SeedableRng;
 use tokio::sync::broadcast;
 use tokio::time;
 
+use nimiq_block_albatross::{MultiSignature, SignedViewChange, ViewChange};
 use nimiq_blockchain_albatross::Blockchain;
 use nimiq_bls::KeyPair;
 use nimiq_build_tools::genesis::{GenesisBuilder, GenesisInfo};
+use nimiq_collections::BitSet;
 use nimiq_consensus_albatross::sync::history::HistorySync;
 use nimiq_consensus_albatross::{Consensus as AbstractConsensus, ConsensusEvent};
 use nimiq_database::volatile::VolatileEnvironment;
+use nimiq_handel::update::{LevelUpdate, LevelUpdateMessage};
 use nimiq_keys::{Address, SecureGenerate};
 use nimiq_mempool::{Mempool, MempoolConfig};
 use nimiq_network_interface::network::Network;
@@ -19,6 +22,8 @@ use nimiq_primitives::networks::NetworkId;
 use nimiq_utils::time::OffsetTime;
 use nimiq_validator::validator::Validator as AbstractValidator;
 use nimiq_validator_network::network_impl::ValidatorNetworkImpl;
+use nimiq_validator::aggregation::view_change::SignedViewChangeMessage;
+use nimiq_vrf::VrfSeed;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -213,4 +218,104 @@ async fn four_validators_can_view_change() {
 
     assert!(blockchain.block_number() > 1);
     assert_eq!(blockchain.view_number(), 1);
+}
+
+fn create_view_change_update(block_number: u32, new_view_number: u32, prev_seed: VrfSeed, key_pair: KeyPair, validator_id: u16, slots: &Vec<u16>) -> LevelUpdateMessage<SignedViewChangeMessage, ViewChange> {
+    let view_change = ViewChange {
+        block_number,
+        new_view_number,
+        prev_seed,
+    };
+    let signed_view_change = SignedViewChange::from_message(
+        view_change.clone(),
+        &key_pair.secret_key,
+        validator_id,
+    );
+
+    let signature = nimiq_bls::AggregateSignature::from_signatures(&[signed_view_change
+        .signature
+        .multiply(slots.len() as u16)]);
+
+    let mut signers = BitSet::new();
+    for slot in slots {
+        signers.insert(*slot as usize);
+    }
+
+    let contribution = SignedViewChangeMessage{
+        view_change: MultiSignature::new(signature, signers),
+        previous_proof: None,
+    };
+
+    LevelUpdate::new(
+        contribution.clone(),
+        Some(contribution.clone()),
+        2,
+        validator_id as usize,
+    ).with_tag(view_change)
+}
+
+#[tokio::test]
+async fn validator_can_catch_up() {
+    simple_logger::SimpleLogger::new().with_level(log::LevelFilter::Trace).init().unwrap();
+    let mut hub = MockHub::default();
+
+    // 6 validators because once 2 are disconnected only 2/3 remain, so they cannot complete a view change on their own.
+    let validators = mock_validators(&mut hub, 5).await;
+
+    let networks: Vec<Arc<MockNetwork>> = validators.iter().map(|v| v.consensus.network.clone()).collect();
+
+    // Disconnect the block producers for the next 2 views.
+    let (signing_key, validator_id, active_validators, disconnected_network) = {
+        let validator = validator_for_slot(&validators, 1, 1);
+        validator.consensus.network.disconnect();
+        let validator = validator_for_slot(&validators, 1, 0);
+        validator.consensus.network.disconnect();
+        (validator.signing_key().clone(), validator.validator_id(), validator.consensus.blockchain.current_validators().clone(), validator.consensus.network.clone())
+    };
+
+
+    // Listen for blockchain events from the new block producer (after two view changes).
+    let (mut events, blockchain) = {
+        let validator = validator_for_slot(&validators, 1, 2);
+        // let consensus = Arc::clone(&validator.consensus);
+        (validator.consensus.blockchain.notifier.write().as_stream(), validator.consensus.blockchain.clone())
+    };
+
+    let slots = &active_validators.get_slots(validator_id);
+
+    let vc = create_view_change_update(
+        0,
+        1,
+        blockchain.head().seed().clone(),
+        signing_key,
+        validator_id,
+        slots,
+    );
+
+    log::warn!("{:?}", &vc);
+
+    // let the validators run.
+    tokio::spawn(future::join_all(validators));
+
+    // advance the time until the validators run into the view_change_timeout (10s)
+    time::delay_for(Duration::from_secs(11)).await;
+    log::warn!("Sending messages");
+    for network in &networks {
+
+        network.broadcast(&vc).await;
+    }
+
+    // enough to complete the view change but not enough to trigger the next timeout
+    time::delay_for(Duration::from_secs(7)).await;
+
+    // reconnect a validator (who has not seen the proof for the ViewChange to view 1)
+    for network in &networks {
+        disconnected_network.dial_mock(network);
+    }
+
+    // Wait for the new block producer to create a block.
+    events.next().await;
+
+    assert_eq!(blockchain.block_number(), 1);
+    assert_eq!(blockchain.view_number(), 2);
 }
