@@ -11,11 +11,15 @@ use blockchain_albatross::{BlockchainEvent, ForkEvent, PushResult};
 use bls::CompressedPublicKey;
 use consensus_albatross::{sync::block_queue::BlockTopic, Consensus, ConsensusEvent, ConsensusProxy};
 use database::{Database, Environment, ReadTransaction, WriteTransaction};
+use genesis::NetworkInfo;
 use hash::Blake2bHash;
 use network_interface::network::Network;
 use nimiq_block_production_albatross::BlockProducer;
 use nimiq_tendermint::TendermintReturn;
 use nimiq_validator_network::ValidatorNetwork;
+use primitives::coin::Coin;
+use primitives::policy;
+use transaction_builder::{Recipient, TransactionBuilder};
 
 use crate::micro::{ProduceMicroBlock, ProduceMicroBlockEvent};
 use crate::r#macro::{PersistedMacroState, ProduceMacroBlock};
@@ -350,6 +354,51 @@ impl<TNetwork: Network, TValidatorNetwork: ValidatorNetwork>
         self.epoch_state.is_some()
     }
 
+    fn is_parked(&self) -> bool {
+        let staking_contract = self.consensus.blockchain.get_staking_contract();
+
+        let public_key = self.signing_key.public_key.compress();
+        staking_contract.current_epoch_parking.contains(&public_key) || staking_contract.previous_epoch_parking.contains(&public_key)
+    }
+
+    fn unpark(&self, wallet_key: &keys::KeyPair) {
+        let network_id = self.consensus.blockchain.network_id;
+        let validator_registry = NetworkInfo::from_network_id(network_id)
+            .validator_registry_address()
+            .expect("No ValidatorRegistry");
+
+        let mut recipient = Recipient::new_staking_builder(validator_registry.clone());
+        recipient.unpark_validator(&self.signing_key.public_key);
+
+        // Send the unpark transaction with a fixed height each epoch in case there's already a pushed unpark transaction.
+        // Note: If the validity window is ever less than an epoch's length, using the last macro block's height would require
+        // handling the case where the last macro block is more blocks away than the validity window inverval, since otherwise
+        // invalid transactions would be created.
+        let validity_start_height = policy::macro_block_before(self.consensus.mempool.current_height());
+
+        let mut tx_builder = TransactionBuilder::new();
+        tx_builder.with_sender(validator_registry.clone())
+            .with_value(Coin::ZERO)
+            .with_network_id(network_id)
+            .with_validity_start_height(validity_start_height)
+            .with_recipient(recipient.generate().unwrap());
+
+        let mut proof_builder = tx_builder.generate().unwrap().unwrap_signalling();
+        proof_builder.sign_with_validator_key_pair(&self.signing_key);
+        let mut proof_builder = proof_builder.generate().unwrap().unwrap_basic();
+        proof_builder.sign_with_key_pair(wallet_key);
+        let transaction = proof_builder.generate().unwrap();
+
+        // self.consensus.mempool.push_transaction(transaction.clone());
+        let cn = self.consensus.clone();
+        tokio::spawn(async move {
+            trace!("Sending unpark transaction");
+            if let Err(_) = cn.send_transaction(transaction.clone()).await {
+                error!("Failed to send unpark transatction");
+            }
+        });
+    }
+
     pub fn validator_id(&self) -> u16 {
         self.epoch_state
             .as_ref()
@@ -398,6 +447,12 @@ impl<TNetwork: Network, TValidatorNetwork: ValidatorNetwork> Future
             }
             if self.micro_producer.is_some() {
                 self.poll_micro(cx);
+            }
+        }
+
+        if let Some(ref wallet_key) = self.wallet_key {
+            if self.is_parked() {
+                self.unpark(wallet_key);
             }
         }
 

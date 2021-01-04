@@ -456,4 +456,5 @@ pub struct ValidatorSettings {
     pub validator_key_file: Option<String>,
     pub wallet_account: Option<String>,
     pub wallet_password: Option<String>,
+    pub wallet_key: Option<String>,
 }

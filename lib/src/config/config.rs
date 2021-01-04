@@ -1,6 +1,7 @@
 use std::fmt::Display;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use derive_builder::Builder;
 use enum_display_derive::Display;
@@ -12,6 +13,7 @@ use nimiq_database::{
     volatile::VolatileEnvironment,
     Environment,
 };
+use nimiq_keys as keys;
 use nimiq_mempool::{filter::Rules as MempoolRules, MempoolConfig};
 use nimiq_network_libp2p::{Keypair as IdentityKeypair, Multiaddr};
 use nimiq_primitives::networks::NetworkId;
@@ -143,6 +145,8 @@ pub struct ValidatorConfig {
     pub wallet_account: Option<String>,
     #[builder(default)]
     pub wallet_password: Option<String>,
+    #[builder(default)]
+    pub wallet_key: Option<keys::KeyPair>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -640,10 +644,12 @@ impl ClientConfigBuilder {
         &mut self,
         wallet_account: String,
         wallet_password: Option<String>,
+        wallet_key: Option<keys::KeyPair>, 
     ) -> &mut Self {
         self.validator = Some(Some(ValidatorConfig {
             wallet_account: Some(wallet_account),
             wallet_password,
+            wallet_key,
         }));
         self
     }
@@ -767,9 +773,19 @@ impl ClientConfigBuilder {
         #[cfg(feature = "validator")]
         {
             if let Some(validator_config) = &config_file.validator {
+                let wallet_private_key =  validator_config.wallet_key.to_owned();
+
+                let wallet_key = wallet_private_key.map(|config_private_key| {
+                    Some(keys::KeyPair::from(
+                        keys::PrivateKey::from_str(&config_private_key)
+                            .map_err(|e| Error::config_error(format!("Invalid wallet private key: {:?}: {}", &config_private_key, e))).ok()?
+                    ))
+                }).unwrap_or_else(|| None);
+
                 self.validator = Some(Some(ValidatorConfig {
                     wallet_account: validator_config.wallet_account.to_owned(),
                     wallet_password: validator_config.wallet_password.to_owned(),
+                    wallet_key: wallet_key,
                 }));
             }
         }
