@@ -59,6 +59,7 @@ impl MockHub {
 
     pub fn new_network(&mut self) -> MockNetwork {
         let address = self.new_address();
+        log::trace!("New mock network: {}", address);
         self.new_network_with_address(address)
     }
 

@@ -717,7 +717,9 @@ mod tests {
         let net3 = Arc::new(hub.new_network());
         net1.dial_mock(&net2);
         net1.dial_mock(&net3);
+        log::trace!("get_peers");
         let peers = net1.get_peers();
+        log::trace!("net1 peers: {:?}", peers);
         let consensus_agents: Vec<_> = peers.into_iter().map(ConsensusAgent::new).map(Arc::new).collect();
 
         fn run_test<F>(

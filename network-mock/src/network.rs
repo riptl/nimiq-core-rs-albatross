@@ -94,6 +94,8 @@ impl MockNetwork {
                 hub: Arc::clone(&self.hub),
             });
 
+        log::trace!("is_new: {:?}", is_new);
+
         if is_new {
             // Insert peer into out peer list
             self.peers.insert(MockPeer {
@@ -101,12 +103,12 @@ impl MockNetwork {
                 peer_id: address.into(),
                 hub: Arc::clone(&self.hub),
             });
+            log::trace!("Inserted");
 
             // Set is_connected flag for this network
             self.is_connected.store(true, Ordering::SeqCst);
 
             // Set is_connected flag for other network
-            let hub = self.hub.lock();
             let is_connected = hub.is_connected.get(&address).unwrap();
             is_connected.store(true, Ordering::SeqCst);
         }
