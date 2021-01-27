@@ -1,10 +1,11 @@
-use ark_crypto_primitives::snark::BooleanInputVar;
+use ark_crypto_primitives::snark::{BooleanInputVar, FromFieldElementsGadget};
 use ark_crypto_primitives::{CircuitSpecificSetupSNARK, SNARKGadget, SNARK};
 use ark_groth16::constraints::{Groth16VerifierGadget, ProofVar, VerifyingKeyVar};
 use ark_groth16::Groth16;
+use ark_mnt4_753::constraints::FqVar as FqMNT4;
 use ark_mnt4_753::constraints::PairingVar;
 use ark_mnt4_753::{Fr as MNT4Fr, MNT4_753};
-use ark_mnt6_753::constraints::FqVar;
+use ark_mnt6_753::constraints::FqVar as FqMNT6;
 use ark_mnt6_753::{Fq, Fr as MNT6Fr};
 use ark_r1cs_std::prelude::{AllocVar, Boolean, EqGadget};
 use ark_r1cs_std::R1CSVar;
@@ -32,10 +33,10 @@ impl ConstraintSynthesizer<MNT4Fr> for TestCircuit {
             Vec::<Boolean<MNT4Fr>>::new_witness(cs.clone(), || Ok(&self.hash_priv[..]))?;
 
         // Allocate all the inputs.
-        let hash_pub_var = Vec::<FqVar>::new_input(cs.clone(), || Ok(&self.hash_pub[..]))?;
+        let hash_pub_var = Vec::<FqMNT6>::new_input(cs.clone(), || Ok(&self.hash_pub[..]))?;
 
         // Unpack the inputs by converting them from field elements to bits and truncating appropriately.
-        let hash_pub_bits = unpack_inputs(hash_pub_var)?[..1024].to_vec();
+        let hash_pub_bits = unpack_inputs(hash_pub_var)?[..512].to_vec();
 
         // Compare the two.
         hash_priv_var.enforce_equal(&hash_pub_bits)
@@ -48,7 +49,7 @@ fn input_works() {
     let rng = &mut test_rng();
 
     // Create random bits.
-    let mut bytes = [0u8; 128];
+    let mut bytes = [0u8; 64];
     rng.fill_bytes(&mut bytes);
 
     let hash_priv = bytes_to_bits(&bytes);
@@ -85,9 +86,6 @@ fn input_works() {
     // Initialize the constraint system.
     let cs = ConstraintSystem::<MNT6Fr>::new_ref();
 
-    // Allocate the random bits in the circuit.
-    let bits_var = Vec::<Boolean<MNT6Fr>>::new_witness(cs.clone(), || Ok(hash_priv)).unwrap();
-
     // Allocate the verifying key.
     let vk_var = VerifyingKeyVar::new_witness(cs.clone(), || Ok(vk)).unwrap();
 
@@ -95,9 +93,11 @@ fn input_works() {
     let proof_var = ProofVar::new_witness(cs.clone(), || Ok(proof)).unwrap();
 
     // Verify the ZK proof.
-    let proof_inputs = pack_inputs(bits_var);
+    let hash_pub = prepare_inputs(hash_priv);
 
-    let input_var = BooleanInputVar::new(proof_inputs);
+    let hash_pub_var = Vec::<FqMNT4>::new_witness(cs.clone(), || Ok(&hash_pub[..])).unwrap();
+
+    let input_var = BooleanInputVar::from_field_elements(&hash_pub_var).unwrap();
 
     assert!(
         Groth16VerifierGadget::<MNT4_753, PairingVar>::verify(&vk_var, &input_var, &proof_var)
@@ -106,3 +106,5 @@ fn input_works() {
             .unwrap()
     )
 }
+
+// TODO: test if bits -> prepare_inputs -> unpack_inputs -> bits gives the same answer on both curves.
