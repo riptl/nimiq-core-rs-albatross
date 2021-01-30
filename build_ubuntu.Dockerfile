@@ -23,7 +23,9 @@ RUN \
 FROM ubuntu:20.04
 
 # Install dependencies.
-RUN apt-get install -y libssl1.1
+RUN apt-get update \
+ && apt-get install -y libssl1.1 \
+ && apt-get clean
 
 # Run as unprivileged user.
 RUN adduser --disabled-password --home /home/nimiq --shell /bin/bash --uid 1001 nimiq

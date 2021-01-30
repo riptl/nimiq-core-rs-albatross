@@ -1,0 +1,29 @@
+on: [push, pull_request]
+name: Test
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install nightly toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+
+      - name: Setup cache
+        uses: actions/cache@v1
+        with:
+          path: ./target
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
