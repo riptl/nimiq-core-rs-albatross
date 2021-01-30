@@ -16,7 +16,7 @@ WORKDIR /build
 # Build.
 RUN \
    --mount=type=cache,target=/build/target \
-   --mount=type=cache,target=/root/.cargo \
+   --mount=type=cache,target=/usr/local/cargo/registry \
    mkdir /build/artifacts \
 && cargo build \
      --bin nimiq-address \
@@ -37,7 +37,7 @@ FROM ubuntu:20.04
 
 # Install dependencies.
 RUN apt-get update \
- && apt-get install -y libssl1.1 \
+ && apt-get install -y libssl1.1 xxd \
  && apt-get clean
 
 # Run as unprivileged user.
