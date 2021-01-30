@@ -21,12 +21,10 @@ jobs:
           password: ${{ secrets.CR_PAT }}
 
       - name: Setup cache
-        uses: actions/cache@v1
+        uses: actions/cache@v2
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
+          key: ${{ runner.os }}-buildx
 
       - name: Build Docker image and push
         uses: docker/build-push-action@v2

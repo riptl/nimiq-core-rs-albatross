@@ -19,9 +19,7 @@ jobs:
         uses: actions/cache@v1
         with:
           path: ./target
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
+          key: ${{ runner.os }}-test
 
       - name: Run cargo test
         uses: actions-rs/cargo@v1
