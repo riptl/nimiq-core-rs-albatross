@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env /bin/bash
+
+set -euo pipefail
 
 function entry () {
     if [[ "$3" == "string" ]]; then
@@ -31,7 +33,7 @@ required host NIMIQ_HOST string
 entry port 8443 number
 optional instant_inbound NIMIQ_INSTANT_INBOUND boolean
 
-nodes_arr=($NIMIQ_SEED_NODES)
+mapfile -t nodes_arr <<< "$NIMIQ_SEED_NODES"
 for node in "${nodes_arr[@]}"; do
     echo "[[network.seed_nodes]]"
     echo "uri = \"$node\""

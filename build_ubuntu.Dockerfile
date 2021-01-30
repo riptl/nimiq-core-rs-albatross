@@ -15,9 +15,22 @@ WORKDIR /build
 
 # Build.
 RUN \
-  --mount=type=cache,target=/build/target \
-  --mount=type=cache,target=/root/.cargo \
-  cargo build --bin nimiq-client && mv /build/target/debug/nimiq-client /build/
+   --mount=type=cache,target=/build/target \
+   --mount=type=cache,target=/root/.cargo \
+   mkdir /build/artifacts \
+&& cargo build \
+     --bin nimiq-address \
+     --bin nimiq-bls \
+     --bin nimiq-client \
+     --bin nimiq-rpc \
+     --bin nimiq-signtx \
+&& mv \
+     /build/target/debug/nimiq-address \
+     /build/target/debug/nimiq-bls \
+     /build/target/debug/nimiq-client \
+     /build/target/debug/nimiq-rpc \
+     /build/target/debug/nimiq-signtx \
+     /build/artifacts/
 
 # Light stage.
 FROM ubuntu:20.04
@@ -31,9 +44,12 @@ RUN apt-get update \
 RUN adduser --disabled-password --home /home/nimiq --shell /bin/bash --uid 1001 nimiq
 USER nimiq
 
-# Pull image from builder.
-COPY --chown=root:root --from=builder /build/nimiq-client /usr/local/bin/nimiq-client
-ENTRYPOINT ["/usr/local/bin/nimiq-client"]
+# Install helper scripts.
+COPY --chown=root:root ./scripts/docker_*.sh /usr/local/bin/
+
+# Install artifacts from build stage.
+COPY --chown=root:root --from=builder /build/artifacts/* /usr/local/bin/
+CMD ["docker_run.sh"]
 
 # https://github.com/opencontainers/image-spec/blob/master/annotations.md
 LABEL \

@@ -1,29 +1,30 @@
-#!/bin/bash
+#!/usr/bin/env /bin/bash
 
-set -e
+set -euo pipefail
 
-mkfifo /root/nimiq.log.pipe || true
-cat /root/nimiq.log.pipe &
-mkdir -p /root/.nimiq
+mkfifo "$HOME/nimiq.log.pipe" || true
+cat "$HOME/nimiq.log.pipe" &
+mkdir -p "$HOME/.nimiq"
 
 function hex2bin () {
     sed 's/\([0-9A-F]\{2\}\)/\\\\\\x\1/gI' | xargs printf
 }
 
 if [[ ! -z "$NIMIQ_PEER_KEY" ]]; then
-    export NIMIQ_PEER_KEY_FILE=/root/.nimiq/peer_key.dat
-    echo "$NIMIQ_PEER_KEY" | hex2bin > $NIMIQ_PEER_KEY_FILE
+    export NIMIQ_PEER_KEY_FILE="$HOME/.nimiq/peer_key.dat"
+    echo "$NIMIQ_PEER_KEY" | hex2bin > "$NIMIQ_PEER_KEY_FILE"
 fi
 
 if [[ ! -z "$VALIDATOR_KEY" ]]; then
-    export VALIDATOR_KEY_FILE=/root/.nimiq/validator_key.dat
-    echo "$VALIDATOR_KEY" | hex2bin > $VALIDATOR_KEY_FILE
+    export VALIDATOR_KEY_FILE="$HOME/.nimiq/validator_key.dat"
+    echo "$VALIDATOR_KEY" | hex2bin > "$VALIDATOR_KEY_FILE"
 fi
 
 if [[ -z "$NIMIQ_HOST" ]]; then
-    export NIMIQ_HOST=$(hostname -i)
+    NIMIQ_HOST="$(hostname -i)"
+    export NIMIQ_HOST
 fi
 
-./docker_config.sh > /root/.nimiq/client.toml
+./docker_config.sh > "$HOME/.nimiq/client.toml"
 
-/bin/nimiq-client $@
+nimiq-client "$@"
